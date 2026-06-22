@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>M8 Lean Proof Agent</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <main class="app">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">EPITA SCIA M8</p>
+          <h1>Lean Proof Agent</h1>
+          <p class="subtitle">LLM candidates, deterministic Lean verification, compiler-feedback repair loop.</p>
+        </div>
+        <div id="health" class="status-pill">Checking providers...</div>
+      </section>
+
+      <section class="workspace">
+        <aside class="panel controls">
+          <label>
+            Theorem
+            <select id="benchmark"></select>
+          </label>
+
+          <label>
+            Provider
+            <select id="provider">
+              <option value="mistral" selected>mistral</option>
+              <option value="openai_compatible">openai_compatible</option>
+            </select>
+          </label>
+
+          <label>
+            Model override
+            <input id="model" placeholder="optional">
+          </label>
+
+          <label>
+            Max iterations
+            <input id="maxIterations" type="number" min="1" max="8" value="3">
+          </label>
+
+          <label>
+            Benchmark suite
+            <select id="suite">
+              <option value="smoke" selected>smoke</option>
+              <option value="research">research</option>
+            </select>
+          </label>
+
+          <label>
+            Benchmark limit
+            <input id="limit" type="number" min="0" value="0">
+          </label>
+
+          <button id="run">Run proof search</button>
+          <button id="runBenchmark">Run full benchmark</button>
+          <button id="download" disabled>Download trace JSON</button>
+        </aside>
+
+        <section class="panel editor">
+          <label>
+            Imports
+            <textarea id="imports" rows="3" spellcheck="false"></textarea>
+          </label>
+          <label>
+            Lean theorem statement
+            <textarea id="statement" rows="5" spellcheck="false"></textarea>
+          </label>
+          <p id="description" class="description"></p>
+        </section>
+      </section>
+
+      <section class="panel results">
+        <div class="results-header">
+          <h2>Trace</h2>
+          <div id="summary" class="summary">No run yet.</div>
+        </div>
+        <div id="attempts" class="attempts"></div>
+        <div id="benchmarkResults" class="benchmark-results"></div>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
