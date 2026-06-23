@@ -7,7 +7,7 @@ import platform
 import shutil
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Iterator, Tuple
 from urllib.parse import urlparse
 
 from m8_proof_agent.benchmarks import find_benchmark, load_all_benchmarks, load_benchmarks
@@ -106,6 +106,42 @@ def api_response(method: str, path: str, body: bytes) -> Tuple[int, Dict[str, An
     return 404, {"error": f"No API route for {method} {route}"}
 
 
+def _run_request_from_body(body: bytes) -> Tuple[RunRequest, Benchmark, Any]:
+    payload = _json_body(body)
+    request = RunRequest(**payload)
+    theorem = apply_environment_to_benchmark(find_benchmark(request.theorem_id, load_benchmarks(suite=request.suite)))
+    provider = get_provider(request.provider, request.model)
+    return request, theorem, provider
+
+
+def _ndjson(payload: Dict[str, Any]) -> bytes:
+    return (json.dumps(payload) + "\n").encode("utf-8")
+
+
+def stream_run_lines(body: bytes) -> Iterator[bytes]:
+    load_dotenv()
+    try:
+        request, theorem, provider = _run_request_from_body(body)
+    except (ValueError, KeyError, ProviderError) as exc:
+        yield _ndjson({"type": "error", "error": str(exc)})
+        return
+
+    def emit_event(event):
+        queued.append(_ndjson({"type": "event", "event": model_to_dict(event)}))
+
+    queued = []
+    trace = run_proof_graph(
+        theorem,
+        provider,
+        verify_fn=VERIFY_FN,
+        max_attempts=request.max_attempts,
+        event_sink=emit_event,
+    )
+    while queued:
+        yield queued.pop(0)
+    yield _ndjson({"type": "trace", "trace": model_to_dict(trace)})
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send_json(self, status: int, payload: Dict[str, Any]) -> None:
         data = json.dumps(payload, indent=2).encode("utf-8")
@@ -140,8 +176,40 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
-        status, payload = api_response("POST", self.path, self.rfile.read(length))
+        body = self.rfile.read(length)
+        if urlparse(self.path).path == "/api/run-stream":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self._stream_run(body)
+            return
+        status, payload = api_response("POST", self.path, body)
         self._send_json(status, payload)
+
+    def _write_stream_line(self, payload: Dict[str, Any]) -> None:
+        self.wfile.write(_ndjson(payload))
+        self.wfile.flush()
+
+    def _stream_run(self, body: bytes) -> None:
+        load_dotenv()
+        try:
+            request, theorem, provider = _run_request_from_body(body)
+        except (ValueError, KeyError, ProviderError) as exc:
+            self._write_stream_line({"type": "error", "error": str(exc)})
+            return
+
+        def emit_event(event) -> None:
+            self._write_stream_line({"type": "event", "event": model_to_dict(event)})
+
+        trace = run_proof_graph(
+            theorem,
+            provider,
+            verify_fn=VERIFY_FN,
+            max_attempts=request.max_attempts,
+            event_sink=emit_event,
+        )
+        self._write_stream_line({"type": "trace", "trace": model_to_dict(trace)})
 
     def log_message(self, fmt: str, *args: Any) -> None:
         print(f"[m8] {self.address_string()} - {fmt % args}")

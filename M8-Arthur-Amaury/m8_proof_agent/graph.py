@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 from time import perf_counter
-from typing import Callable, List
+from typing import Callable, List, Optional
 from uuid import uuid4
 
 from .models import AgentRole, Benchmark, LeanResult, ProofAttempt, ProofCandidate, ProofTrace, TraceEvent
@@ -11,6 +11,7 @@ from .verifier import verify_lean
 
 
 VerifyFn = Callable[..., LeanResult]
+EventSink = Callable[[TraceEvent], None]
 
 
 def langgraph_available() -> bool:
@@ -22,13 +23,24 @@ def langgraph_available() -> bool:
 
 
 class EventBuilder:
-    def __init__(self) -> None:
+    def __init__(self, started_at: float, sink: Optional[EventSink] = None) -> None:
         self.events: List[TraceEvent] = []
+        self.started_at = started_at
+        self.sink = sink
 
     def add(self, kind: str, agent: AgentRole, message: str, **payload: object) -> None:
-        self.events.append(
-            TraceEvent(index=len(self.events) + 1, kind=kind, agent=agent, message=message, payload=dict(payload))
+        event_payload = dict(payload)
+        event_payload.setdefault("elapsed_ms", int((perf_counter() - self.started_at) * 1000))
+        event = TraceEvent(
+            index=len(self.events) + 1,
+            kind=kind,
+            agent=agent,
+            message=message,
+            payload=event_payload,
         )
+        self.events.append(event)
+        if self.sink:
+            self.sink(event)
 
 
 def _verify_candidate(verify_fn: VerifyFn, theorem: Benchmark, proof: str) -> LeanResult:
@@ -46,9 +58,10 @@ def run_proof_graph(
     provider: CandidateProvider,
     verify_fn: VerifyFn = verify_lean,
     max_attempts: int = 3,
+    event_sink: Optional[EventSink] = None,
 ) -> ProofTrace:
     started = perf_counter()
-    events = EventBuilder()
+    events = EventBuilder(started_at=started, sink=event_sink)
     attempts: List[ProofAttempt] = []
     errors: List[str] = []
     final_proof = None
@@ -95,6 +108,9 @@ def run_proof_graph(
                 "Lean accepted the candidate" if verification.success else "Lean rejected the candidate",
                 status=verification.status,
                 errors=verification.errors,
+                output=verification.output,
+                command=verification.command,
+                verification_elapsed_ms=verification.elapsed_ms,
             )
             if verification.success:
                 final_proof = candidate.proof

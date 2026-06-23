@@ -133,6 +133,32 @@ class GraphTests(unittest.TestCase):
         self.assertEqual(trace.status, "success")
         self.assertEqual(seen["lean_project_dir"], "/tmp/mathlib-project")
 
+    def test_graph_streams_events_with_elapsed_time(self) -> None:
+        from m8_proof_agent.graph import ProofCandidate, run_proof_graph
+        from m8_proof_agent.models import LeanResult
+
+        class Provider:
+            name = "fake"
+            model = "unit"
+
+            def generate_candidates(self, context):
+                return [ProofCandidate(proof="trivial", rationale="True is trivial.")]
+
+        streamed = []
+
+        def verify(imports: str, statement: str, proof: str) -> LeanResult:
+            return LeanResult(success=True, status="success", output="ok")
+
+        trace = run_proof_graph(self._benchmark(), Provider(), verify_fn=verify, event_sink=streamed.append)
+
+        self.assertEqual(trace.status, "success")
+        self.assertGreaterEqual(len(streamed), 5)
+        self.assertEqual(streamed[0].kind, "run_started")
+        self.assertIn("elapsed_ms", streamed[0].payload)
+        self.assertTrue(any(event.kind == "verification_finished" for event in streamed))
+        verification_event = next(event for event in streamed if event.kind == "verification_finished")
+        self.assertEqual(verification_event.payload["output"], "ok")
+
 
 if __name__ == "__main__":
     unittest.main()

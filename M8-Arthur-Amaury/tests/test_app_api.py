@@ -115,6 +115,27 @@ class AppApiTests(unittest.TestCase):
         self.assertEqual(payload["trace"]["status"], "success")
         self.assertEqual(payload["trace"]["final_proof"], "trivial")
 
+    def test_stream_run_lines_yields_events_then_final_trace(self) -> None:
+        import app
+        from m8_proof_agent.models import LeanResult
+
+        original = app.VERIFY_FN
+        app.VERIFY_FN = lambda imports, statement, proof: LeanResult(success=True, status="success", output="ok")
+        try:
+            lines = list(
+                app.stream_run_lines(
+                    json.dumps({"theorem_id": "smoke_true", "suite": "smoke", "provider": "demo"}).encode("utf-8")
+                )
+            )
+        finally:
+            app.VERIFY_FN = original
+
+        payloads = [json.loads(line.decode("utf-8")) for line in lines]
+        self.assertEqual(payloads[0]["type"], "event")
+        self.assertTrue(any(item["type"] == "event" and item["event"]["kind"] == "verification_finished" for item in payloads))
+        self.assertEqual(payloads[-1]["type"], "trace")
+        self.assertEqual(payloads[-1]["trace"]["status"], "success")
+
 
 if __name__ == "__main__":
     unittest.main()

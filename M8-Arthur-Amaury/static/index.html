@@ -60,12 +60,19 @@
           <h2>Proof Trace</h2>
           <p id="summary">No run yet.</p>
         </div>
-        <div id="timeline" class="timeline"></div>
-        <h3>Final Proof</h3>
-        <pre id="finalProof"></pre>
+        <div class="trace-grid">
+          <div>
+            <div id="timeline" class="timeline"></div>
+            <h3>Final Proof</h3>
+            <pre id="finalProof"></pre>
+          </div>
+          <aside class="detail-panel">
+            <h3 id="detailTitle">Step Details</h3>
+            <pre id="detailPayload">Click a trace step to inspect the raw event payload, proof candidate, Lean command, and verifier logs.</pre>
+          </aside>
+        </div>
       </section>
     </main>
     <script src="/static/app.js"></script>
   </body>
 </html>
-
