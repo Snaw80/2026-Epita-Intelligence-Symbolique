@@ -1,0 +1,24 @@
+[
+  {
+    "id": "minif2f_mathd_algebra_17",
+    "title": "miniF2F-style algebra identity",
+    "suite": "minif2f_subset",
+    "difficulty": "starter",
+    "imports": "import Mathlib",
+    "statement": "theorem minif2f_mathd_algebra_17 (a b : Nat) : a + b = b + a := by",
+    "source": "miniF2F curated subset",
+    "expected_tactics": ["exact Nat.add_comm a b"],
+    "description": "A tiny Lean 4 compatible starter item that keeps the miniF2F benchmark path visible. Requires M8_LEAN_PROJECT_DIR for real Mathlib verification."
+  },
+  {
+    "id": "minif2f_logic_imp",
+    "title": "miniF2F-style implication",
+    "suite": "minif2f_subset",
+    "difficulty": "starter",
+    "imports": "",
+    "statement": "theorem minif2f_logic_imp (p q : Prop) : p → q → p := by",
+    "source": "miniF2F curated subset",
+    "expected_tactics": ["intro hp", "intro hq", "exact hp"],
+    "description": "Starter theorem for validating proof-loop plumbing before importing a larger miniF2F slice."
+  }
+]

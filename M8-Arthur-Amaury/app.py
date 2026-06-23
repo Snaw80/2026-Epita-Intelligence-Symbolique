@@ -1,10 +1,3 @@
-"""Local web app for the M8 Lean proof-agent demo.
-
-Run from the repository root or this directory:
-
-    python3 M8-Arthur-Amaury/app.py
-"""
-
 from __future__ import annotations
 
 import json
@@ -17,25 +10,21 @@ from pathlib import Path
 from typing import Any, Dict, Tuple
 from urllib.parse import urlparse
 
-from m8_lean_agent.benchmarks import find_benchmark, load_benchmarks
-from m8_lean_agent.engine import run_benchmark_suite, run_proof_session
-from m8_lean_agent.models import Benchmark
-from m8_lean_agent.verifier import find_lean_binary
+from m8_proof_agent.benchmarks import find_benchmark, load_all_benchmarks, load_benchmarks
+from m8_proof_agent.graph import langgraph_available, run_proof_graph
+from m8_proof_agent.models import Benchmark, RunRequest, model_to_dict
+from m8_proof_agent.providers import ProviderError, get_provider
+from m8_proof_agent.replay import list_traces, load_trace, resolve_trace
+from m8_proof_agent.verifier import find_lean, verify_lean
 
 
 ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
-LEAN_HOME_OVERRIDE = None
-LEAN_COMMAND_LOOKUP = shutil.which
-ENV_PATH_OVERRIDE = None
-BENCHMARK_SUITES = {
-    "smoke": ROOT / "benchmarks.json",
-    "research": ROOT / "research_benchmarks.json",
-}
+VERIFY_FN = verify_lean
 
 
-def load_dotenv(path: Path = None, environ: Dict[str, str] = os.environ) -> None:
-    env_path = Path(path or ENV_PATH_OVERRIDE or ROOT / ".env")
+def load_dotenv(path: Path | str = ROOT / ".env", environ: Dict[str, str] = os.environ) -> None:
+    env_path = Path(path)
     if not env_path.exists():
         return
     for raw_line in env_path.read_text(encoding="utf-8").splitlines():
@@ -56,136 +45,63 @@ def load_dotenv(path: Path = None, environ: Dict[str, str] = os.environ) -> None
         environ[key] = value
 
 
-def _benchmark_dict(benchmark: Benchmark) -> Dict[str, Any]:
-    return {
-        "id": benchmark.id,
-        "title": benchmark.title,
-        "difficulty": benchmark.difficulty,
-        "imports": benchmark.imports,
-        "statement": benchmark.statement,
-        "description": benchmark.description,
-        "expected_tactics": benchmark.expected_tactics,
-        "source": benchmark.source,
-        "lean_project_dir": benchmark.lean_project_dir,
-    }
+def _json_body(body: bytes) -> Dict[str, Any]:
+    try:
+        return json.loads(body.decode("utf-8") or "{}")
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON: {exc}") from exc
 
 
-def _load_suite(name: str):
-    suite_name = name if name in BENCHMARK_SUITES else "smoke"
-    suite_path = Path(os.getenv("RESEARCH_BENCHMARK_PATH", "")) if suite_name == "research" and os.getenv("RESEARCH_BENCHMARK_PATH") else BENCHMARK_SUITES[suite_name]
-    if not suite_path.exists():
-        if suite_name == "research":
-            raise FileNotFoundError(
-                f"Benchmark suite 'research' is not configured at {suite_path}. "
-                "Generate it with: python3 M8-Arthur-Amaury/import_putnam.py /absolute/path/to/PutnamBench/lean4"
-            )
-        raise FileNotFoundError(f"Benchmark suite {suite_name!r} is not configured at {suite_path}")
-    benchmarks = load_benchmarks(suite_path)
-    research_project_dir = os.getenv("RESEARCH_LEAN_PROJECT_DIR", "")
-    if suite_name == "research" and research_project_dir:
-        for benchmark in benchmarks:
-            if not benchmark.lean_project_dir:
-                benchmark.lean_project_dir = research_project_dir
-    return suite_name, benchmarks
-
-
-def _theorem_from_payload(payload: Dict[str, Any]) -> Benchmark:
-    benchmarks = load_benchmarks(ROOT / "benchmarks.json")
-    theorem_id = str(payload.get("theorem_id") or "")
-    if theorem_id:
-        base = find_benchmark(theorem_id, benchmarks)
-    else:
-        base = Benchmark(
-            id="custom",
-            title="Custom theorem",
-            difficulty="custom",
-            imports="",
-            statement="",
-            description="",
-            expected_tactics=["simp", "trivial", "rfl"],
-        )
-
-    statement = str(payload.get("statement") or base.statement).strip()
-    imports = str(payload.get("imports") if payload.get("imports") is not None else base.imports)
-    title = str(payload.get("title") or base.title)
-    return Benchmark(
-        id=base.id,
-        title=title,
-        difficulty=base.difficulty,
-        imports=imports,
-        statement=statement,
-        description=base.description,
-        expected_tactics=base.expected_tactics,
-    )
-
-
-def _health_payload() -> Dict[str, Any]:
-    load_dotenv()
-    return {
-        "python": platform.python_version(),
-        "lean": find_lean_binary(LEAN_COMMAND_LOOKUP, home=LEAN_HOME_OVERRIDE),
-        "providers": {
-            "mistral": bool(os.getenv("MISTRAL_API_KEY")),
-            "openai_compatible": bool(os.getenv("OPENAI_API_KEY")),
-        },
-    }
+def apply_environment_to_benchmark(benchmark: Benchmark, environ: Dict[str, str] = os.environ) -> Benchmark:
+    if benchmark.lean_project_dir:
+        return benchmark
+    project_dir = environ.get("M8_LEAN_PROJECT_DIR") or environ.get("RESEARCH_LEAN_PROJECT_DIR")
+    if project_dir and "import Mathlib" in benchmark.imports:
+        data = model_to_dict(benchmark)
+        data["lean_project_dir"] = project_dir
+        return Benchmark(**data)
+    return benchmark
 
 
 def api_response(method: str, path: str, body: bytes) -> Tuple[int, Dict[str, Any]]:
+    load_dotenv()
     route = urlparse(path).path
-    if method == "GET" and route == "/api/benchmarks":
-        benchmarks = load_benchmarks(ROOT / "benchmarks.json")
-        return 200, {"benchmarks": [_benchmark_dict(item) for item in benchmarks]}
-
     if method == "GET" and route == "/api/health":
-        return 200, _health_payload()
+        return 200, {
+            "python": platform.python_version(),
+            "lean": find_lean(),
+            "lake": shutil.which("lake"),
+            "langgraph_available": langgraph_available(),
+            "providers": {
+                "demo": True,
+                "openai_compatible": bool(os.getenv("OPENAI_API_KEY")),
+            },
+        }
+
+    if method == "GET" and route == "/api/benchmarks":
+        return 200, {"benchmarks": [model_to_dict(apply_environment_to_benchmark(item)) for item in load_all_benchmarks()]}
+
+    if method == "GET" and route == "/api/traces":
+        return 200, {"traces": list_traces()}
+
+    if method == "POST" and route == "/api/replay":
+        try:
+            payload = _json_body(body)
+            trace = load_trace(resolve_trace(str(payload.get("trace") or "")))
+        except (ValueError, FileNotFoundError) as exc:
+            return 400, {"error": str(exc)}
+        return 200, {"trace": model_to_dict(trace)}
 
     if method == "POST" and route == "/api/run":
-        load_dotenv()
         try:
-            payload = json.loads(body.decode("utf-8") or "{}")
-        except json.JSONDecodeError as exc:
-            return 400, {"error": f"Invalid JSON: {exc}"}
-
-        benchmark = _theorem_from_payload(payload)
-        provider = str(payload.get("provider") or "mistral")
-        max_iterations = int(payload.get("max_iterations") or 3)
-        model = str(payload.get("model") or "")
-
-        result = run_proof_session(
-            theorem=benchmark,
-            provider=provider,
-            max_iterations=max(1, min(max_iterations, 8)),
-            model=model,
-        )
-        return 200, result.to_trace_dict()
-
-    if method == "POST" and route == "/api/run-benchmark":
-        load_dotenv()
-        try:
-            payload = json.loads(body.decode("utf-8") or "{}")
-        except json.JSONDecodeError as exc:
-            return 400, {"error": f"Invalid JSON: {exc}"}
-
-        suite = str(payload.get("suite") or "smoke")
-        try:
-            suite_name, benchmarks = _load_suite(suite)
-        except FileNotFoundError as exc:
+            payload = _json_body(body)
+            request = RunRequest(**payload)
+            theorem = apply_environment_to_benchmark(find_benchmark(request.theorem_id, load_benchmarks(suite=request.suite)))
+            provider = get_provider(request.provider, request.model)
+            trace = run_proof_graph(theorem, provider, verify_fn=VERIFY_FN, max_attempts=request.max_attempts)
+        except (ValueError, KeyError, ProviderError) as exc:
             return 400, {"error": str(exc)}
-
-        provider = str(payload.get("provider") or "mistral")
-        max_iterations = int(payload.get("max_iterations") or 3)
-        limit = int(payload.get("limit") or 0)
-        model = str(payload.get("model") or "")
-        result = run_benchmark_suite(
-            suite_name=suite_name,
-            benchmarks=benchmarks,
-            provider=provider,
-            max_iterations=max(1, min(max_iterations, 8)),
-            limit=max(0, limit),
-            model=model,
-        )
-        return 200, result.to_trace_dict()
+        return 200, {"trace": model_to_dict(trace)}
 
     return 404, {"error": f"No API route for {method} {route}"}
 
@@ -224,18 +140,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
-        body = self.rfile.read(length)
-        status, payload = api_response("POST", self.path, body)
+        status, payload = api_response("POST", self.path, self.rfile.read(length))
         self._send_json(status, payload)
 
     def log_message(self, fmt: str, *args: Any) -> None:
-        print(f"[m8-demo] {self.address_string()} - {fmt % args}")
+        print(f"[m8] {self.address_string()} - {fmt % args}")
 
 
 def run_server(host: str = "127.0.0.1", port: int = 8787) -> None:
     server = ThreadingHTTPServer((host, port), Handler)
-    print(f"M8 Lean Proof Agent demo running at http://{host}:{port}")
-    print("Press Ctrl+C to stop.")
+    print(f"M8 Lean Proof Agent running at http://{host}:{port}")
     server.serve_forever()
 
 

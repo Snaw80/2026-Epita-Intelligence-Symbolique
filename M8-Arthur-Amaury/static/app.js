@@ -1,186 +1,102 @@
-let benchmarks = [];
-let lastTrace = null;
+const state = { benchmarks: [], traces: [], lastTrace: null };
 
 const $ = (id) => document.getElementById(id);
 
-async function loadJson(url, options) {
+async function fetchJson(url, options) {
   const response = await fetch(url, options);
   const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(payload.error || response.statusText);
-  }
+  if (!response.ok) throw new Error(payload.error || response.statusText);
   return payload;
 }
 
-function selectedBenchmark() {
-  return benchmarks.find((item) => item.id === $("benchmark").value);
-}
-
-function fillBenchmark() {
-  const item = selectedBenchmark();
-  if (!item) return;
-  $("imports").value = item.imports || "";
-  $("statement").value = item.statement;
-  $("description").textContent = item.description || "";
-}
-
 function renderHealth(payload) {
-  const configuredProviders = Object.entries(payload.providers || {})
-    .filter(([, ready]) => ready)
-    .map(([name]) => name)
-    .join(", ");
-  $("health").textContent = configuredProviders || "No API key";
+  const lean = payload.lean ? 'Lean ready' : 'Replay ready';
+  const graph = payload.langgraph_available ? 'LangGraph installed' : 'Graph fallback';
+  const openai = payload.providers.openai_compatible ? 'OpenAI configured' : 'Demo provider only';
+  $('health').textContent = `${lean} | ${graph} | ${openai}`;
 }
 
-function attemptCard(attempt) {
-  const success = attempt.success ? "success" : "";
-  const errors = attempt.errors ? `<pre>${escapeHtml(attempt.errors)}</pre>` : "";
-  return `
-    <article class="attempt ${success}">
-      <strong>Iteration ${attempt.iteration}, candidate ${attempt.candidate_index}: ${attempt.status}</strong>
-      <pre>${escapeHtml(attempt.proof)}</pre>
-      <p>${escapeHtml(attempt.rationale || "")}</p>
-      ${errors}
-    </article>
-  `;
+function renderBenchmarks() {
+  const suite = $('suite').value;
+  const items = state.benchmarks.filter((item) => item.suite === suite);
+  $('theorem').innerHTML = items.map((item) => `<option value="${item.id}">${item.title}</option>`).join('');
+  renderSelectedTheorem();
 }
 
-function escapeHtml(text) {
-  return String(text)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+function renderSelectedTheorem() {
+  const theorem = state.benchmarks.find((item) => item.id === $('theorem').value);
+  if (!theorem) return;
+  $('title').textContent = theorem.title;
+  $('description').textContent = theorem.description || `${theorem.source} | ${theorem.difficulty}`;
+  $('statement').textContent = `${theorem.imports ? theorem.imports + '\n\n' : ''}${theorem.statement}`;
+}
+
+function renderTraces() {
+  $('trace').innerHTML = state.traces.map((trace) => `<option value="${trace.file}">${trace.theorem_id} (${trace.status})</option>`).join('');
 }
 
 function renderTrace(trace) {
-  lastTrace = trace;
-  $("download").disabled = false;
-  $("summary").textContent =
-    `${trace.status} | ${trace.attempts.length} attempts | ${trace.elapsed_ms} ms | provider ${trace.provider}`;
-  $("attempts").innerHTML = trace.attempts.map(attemptCard).join("");
-  $("benchmarkResults").innerHTML = "";
+  state.lastTrace = trace;
+  $('download').disabled = false;
+  $('summary').textContent = `${trace.status} | ${trace.provider}/${trace.model} | ${trace.elapsed_ms}ms`;
+  $('timeline').innerHTML = trace.events.map((event) => `
+    <article class="event">
+      <div class="event-meta">${event.index}. ${event.agent} / ${event.kind}</div>
+      <div>${event.message}</div>
+    </article>
+  `).join('');
+  $('finalProof').textContent = trace.final_proof || trace.error || 'No final proof.';
 }
 
-function renderBenchmarkTrace(trace) {
-  lastTrace = trace;
-  $("download").disabled = false;
-  $("attempts").innerHTML = "";
-  $("summary").textContent =
-    `${trace.status} | ${trace.success}/${trace.total} solved | first try ${trace.first_try_success} | avg attempts ${trace.average_attempts}`;
-  const rows = trace.sessions
-    .map(
-      (session) => `
-        <tr>
-          <td>${escapeHtml(session.theorem_id)}</td>
-          <td>${escapeHtml(session.status)}</td>
-          <td>${session.attempts.length}</td>
-          <td>${session.elapsed_ms} ms</td>
-          <td>${escapeHtml(session.error || "")}</td>
-        </tr>
-      `
-    )
-    .join("");
-  $("benchmarkResults").innerHTML = `
-    <table>
-      <thead>
-        <tr>
-          <th>Theorem</th>
-          <th>Status</th>
-          <th>Attempts</th>
-          <th>Time</th>
-          <th>Detail</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `;
-}
-
-async function runProof() {
-  $("run").disabled = true;
-  $("runBenchmark").disabled = true;
-  $("summary").textContent = "Running...";
-  $("attempts").innerHTML = "";
-  $("benchmarkResults").innerHTML = "";
+async function run() {
+  $('summary').textContent = 'Running...';
   try {
-    const payload = {
-      theorem_id: $("benchmark").value,
-      provider: $("provider").value,
-      model: $("model").value,
-      max_iterations: Number($("maxIterations").value || 3),
-      imports: $("imports").value,
-      statement: $("statement").value,
-    };
-    renderTrace(
-      await loadJson("/api/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      })
-    );
+    if ($('mode').value === 'replay') {
+      const payload = await fetchJson('/api/replay', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trace: $('trace').value }),
+      });
+      renderTrace(payload.trace);
+      return;
+    }
+    const payload = await fetchJson('/api/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        theorem_id: $('theorem').value,
+        suite: $('suite').value,
+        provider: $('provider').value,
+        max_attempts: Number($('maxAttempts').value),
+      }),
+    });
+    renderTrace(payload.trace);
   } catch (error) {
-    $("summary").textContent = error.message;
-  } finally {
-    $("run").disabled = false;
-    $("runBenchmark").disabled = false;
-  }
-}
-
-async function runBenchmark() {
-  $("run").disabled = true;
-  $("runBenchmark").disabled = true;
-  $("summary").textContent = "Running benchmark...";
-  $("attempts").innerHTML = "";
-  $("benchmarkResults").innerHTML = "";
-  try {
-    const payload = {
-      suite: $("suite").value,
-      provider: $("provider").value,
-      model: $("model").value,
-      max_iterations: Number($("maxIterations").value || 3),
-      limit: Number($("limit").value || 0),
-    };
-    renderBenchmarkTrace(
-      await loadJson("/api/run-benchmark", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      })
-    );
-  } catch (error) {
-    $("summary").textContent = error.message;
-  } finally {
-    $("run").disabled = false;
-    $("runBenchmark").disabled = false;
+    $('summary').textContent = error.message;
   }
 }
 
 function downloadTrace() {
-  if (!lastTrace) return;
-  const blob = new Blob([JSON.stringify(lastTrace, null, 2)], { type: "application/json" });
+  if (!state.lastTrace) return;
+  const blob = new Blob([JSON.stringify(state.lastTrace, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
+  const link = document.createElement('a');
   link.href = url;
-  link.download = `m8-trace-${lastTrace.session_id}.json`;
+  link.download = `${state.lastTrace.run_id}.json`;
   link.click();
   URL.revokeObjectURL(url);
 }
 
 async function init() {
-  const benchmarkPayload = await loadJson("/api/benchmarks");
-  benchmarks = benchmarkPayload.benchmarks;
-  $("benchmark").innerHTML = benchmarks
-    .map((item) => `<option value="${item.id}">${escapeHtml(item.title)}</option>`)
-    .join("");
-  fillBenchmark();
-  $("benchmark").addEventListener("change", fillBenchmark);
-  $("run").addEventListener("click", runProof);
-  $("runBenchmark").addEventListener("click", runBenchmark);
-  $("download").addEventListener("click", downloadTrace);
-  renderHealth(await loadJson("/api/health"));
+  renderHealth(await fetchJson('/api/health'));
+  state.benchmarks = (await fetchJson('/api/benchmarks')).benchmarks;
+  state.traces = (await fetchJson('/api/traces')).traces;
+  renderBenchmarks();
+  renderTraces();
 }
 
-init().catch((error) => {
-  $("summary").textContent = error.message;
-});
+$('suite').addEventListener('change', renderBenchmarks);
+$('theorem').addEventListener('change', renderSelectedTheorem);
+$('run').addEventListener('click', run);
+$('download').addEventListener('click', downloadTrace);
+init().catch((error) => { $('summary').textContent = error.message; });
