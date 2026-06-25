@@ -9,10 +9,11 @@ from .models import Benchmark
 
 ROOT = Path(__file__).resolve().parents[1]
 BENCHMARK_DIR = ROOT / "benchmarks"
+KNOWN_SUITES = {"smoke", "minif2f_subset", "minif2f_v2s"}
 
 
 def suite_path(suite: str) -> Path:
-    safe_suite = suite if suite in {"smoke", "minif2f_subset"} else "smoke"
+    safe_suite = suite if suite in KNOWN_SUITES else "smoke"
     return BENCHMARK_DIR / f"{safe_suite}.json"
 
 
@@ -31,7 +32,9 @@ def find_benchmark(theorem_id: str, benchmarks: Iterable[Benchmark]) -> Benchmar
 
 def load_all_benchmarks() -> List[Benchmark]:
     all_items: List[Benchmark] = []
-    for suite in ("smoke", "minif2f_subset"):
+    for suite in ("smoke", "minif2f_subset", "minif2f_v2s"):
+        path = suite_path(suite)
+        if not path.exists():
+            continue
         all_items.extend(load_benchmarks(suite=suite))
     return all_items
-

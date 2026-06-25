@@ -37,8 +37,8 @@ class ModelTests(unittest.TestCase):
             run_id="run-test",
             theorem=theorem,
             mode="real",
-            provider="demo",
-            model="deterministic",
+            provider="openai",
+            model="gpt-test",
             status="success",
             events=[
                 TraceEvent(
@@ -81,7 +81,7 @@ class ModelTests(unittest.TestCase):
     def test_run_request_leaves_model_empty_so_provider_can_use_env(self) -> None:
         from m8_proof_agent.models import RunRequest
 
-        request = RunRequest(theorem_id="x", provider="openai_compatible")
+        request = RunRequest(theorem_id="x", provider="openai")
 
         self.assertEqual(request.model, "")
 

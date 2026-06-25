@@ -5,6 +5,8 @@ import os
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 
@@ -51,6 +53,7 @@ class AppApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("python", payload)
         self.assertIn("langgraph_available", payload)
+        self.assertNotIn("demo", [provider["name"] for provider in payload["providers"]])
 
     def test_apply_environment_sets_lean_project_dir_for_mathlib_benchmark(self) -> None:
         import app
@@ -81,60 +84,328 @@ class AppApiTests(unittest.TestCase):
         self.assertIn("smoke", suites)
         self.assertIn("minif2f_subset", suites)
 
-    def test_traces_and_replay_return_sample_trace(self) -> None:
+    def test_traces_and_replay_return_latest_trace(self) -> None:
         import app
 
-        traces_status, traces_payload = app.api_response("GET", "/api/traces", b"")
-        replay_status, replay_payload = app.api_response(
-            "POST",
-            "/api/replay",
-            json.dumps({"trace": "sample_success.json"}).encode("utf-8"),
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            original_trace_dir = app.TRACE_DIR
+            app.TRACE_DIR = Path(tmp)
+            (app.TRACE_DIR / "old.json").write_text(json.dumps(trace_payload("run-old", "old_theorem")), encoding="utf-8")
+            (app.TRACE_DIR / "new.json").write_text(json.dumps(trace_payload("run-new", "new_theorem")), encoding="utf-8")
+            os.utime(app.TRACE_DIR / "old.json", (100, 100))
+            os.utime(app.TRACE_DIR / "new.json", (200, 200))
+            try:
+                traces_status, traces_payload = app.api_response("GET", "/api/traces", b"")
+                replay_status, replay_payload = app.api_response(
+                    "POST",
+                    "/api/replay",
+                    json.dumps({"trace": "old.json"}).encode("utf-8"),
+                )
+            finally:
+                app.TRACE_DIR = original_trace_dir
 
         self.assertEqual(traces_status, 200)
         self.assertEqual(replay_status, 200)
-        self.assertTrue(any(item["file"] == "sample_success.json" for item in traces_payload["traces"]))
+        self.assertTrue(any(item["file"] == "new.json" for item in traces_payload["traces"]))
         self.assertEqual(replay_payload["trace"]["status"], "success")
+        self.assertEqual(replay_payload["trace"]["run_id"], "run-new")
 
-    def test_run_uses_demo_provider_and_injected_verifier(self) -> None:
+    def test_replay_can_return_latest_trace_for_specific_theorem(self) -> None:
+        import app
+
+        with tempfile.TemporaryDirectory() as tmp:
+            original_trace_dir = app.TRACE_DIR
+            app.TRACE_DIR = Path(tmp)
+            (app.TRACE_DIR / "target-old.json").write_text(
+                json.dumps(trace_payload("run-target-old", "target_theorem")),
+                encoding="utf-8",
+            )
+            (app.TRACE_DIR / "other-new.json").write_text(
+                json.dumps(trace_payload("run-other-new", "other_theorem")),
+                encoding="utf-8",
+            )
+            (app.TRACE_DIR / "target-new.json").write_text(
+                json.dumps(trace_payload("run-target-new", "target_theorem")),
+                encoding="utf-8",
+            )
+            os.utime(app.TRACE_DIR / "target-old.json", (100, 100))
+            os.utime(app.TRACE_DIR / "other-new.json", (300, 300))
+            os.utime(app.TRACE_DIR / "target-new.json", (200, 200))
+            try:
+                status, payload = app.api_response(
+                    "POST",
+                    "/api/replay",
+                    json.dumps({"theorem_id": "target_theorem"}).encode("utf-8"),
+                )
+            finally:
+                app.TRACE_DIR = original_trace_dir
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["trace"]["run_id"], "run-target-new")
+
+    def test_run_persists_new_trace_for_future_replay(self) -> None:
         import app
         from m8_proof_agent.models import LeanResult
 
-        original = app.VERIFY_FN
-        app.VERIFY_FN = lambda imports, statement, proof: LeanResult(success=True, status="success", output="ok")
-        try:
-            status, payload = app.api_response(
-                "POST",
-                "/api/run",
-                json.dumps({"theorem_id": "smoke_true", "suite": "smoke", "provider": "demo"}).encode("utf-8"),
-            )
-        finally:
-            app.VERIFY_FN = original
+        original_verify = app.VERIFY_FN
+        original_get_provider = app.get_provider
+        original_trace_dir = app.TRACE_DIR
+        with tempfile.TemporaryDirectory() as tmp:
+            app.TRACE_DIR = Path(tmp)
+            app.VERIFY_FN = lambda imports, statement, proof: LeanResult(success=True, status="success", output="ok")
+            app.get_provider = lambda name, model="": FakeProvider()
+            try:
+                status, payload = app.api_response(
+                    "POST",
+                    "/api/run",
+                    json.dumps({"theorem_id": "smoke_true", "suite": "smoke", "provider": "openai"}).encode("utf-8"),
+                )
+                replay_status, replay_payload = app.api_response("POST", "/api/replay", b"{}")
+            finally:
+                app.VERIFY_FN = original_verify
+                app.get_provider = original_get_provider
+                app.TRACE_DIR = original_trace_dir
 
         self.assertEqual(status, 200)
+        self.assertEqual(replay_status, 200)
         self.assertEqual(payload["trace"]["status"], "success")
         self.assertEqual(payload["trace"]["final_proof"], "trivial")
+        self.assertEqual(replay_payload["trace"]["run_id"], payload["trace"]["run_id"])
 
     def test_stream_run_lines_yields_events_then_final_trace(self) -> None:
         import app
         from m8_proof_agent.models import LeanResult
 
-        original = app.VERIFY_FN
-        app.VERIFY_FN = lambda imports, statement, proof: LeanResult(success=True, status="success", output="ok")
-        try:
-            lines = list(
-                app.stream_run_lines(
-                    json.dumps({"theorem_id": "smoke_true", "suite": "smoke", "provider": "demo"}).encode("utf-8")
+        original_verify = app.VERIFY_FN
+        original_get_provider = app.get_provider
+        original_trace_dir = app.TRACE_DIR
+        with tempfile.TemporaryDirectory() as tmp:
+            app.TRACE_DIR = Path(tmp)
+            app.VERIFY_FN = lambda imports, statement, proof: LeanResult(success=True, status="success", output="ok")
+            app.get_provider = lambda name, model="": FakeProvider()
+            try:
+                lines = list(
+                    app.stream_run_lines(
+                        json.dumps({"theorem_id": "smoke_true", "suite": "smoke", "provider": "openai"}).encode("utf-8")
+                    )
                 )
-            )
-        finally:
-            app.VERIFY_FN = original
+            finally:
+                app.VERIFY_FN = original_verify
+                app.get_provider = original_get_provider
+                app.TRACE_DIR = original_trace_dir
 
         payloads = [json.loads(line.decode("utf-8")) for line in lines]
         self.assertEqual(payloads[0]["type"], "event")
         self.assertTrue(any(item["type"] == "event" and item["event"]["kind"] == "verification_finished" for item in payloads))
         self.assertEqual(payloads[-1]["type"], "trace")
         self.assertEqual(payloads[-1]["trace"]["status"], "success")
+
+    def test_run_suite_scores_all_requested_benchmarks_and_saves_traces(self) -> None:
+        import app
+        from m8_proof_agent.models import Benchmark, LeanResult
+
+        benchmarks = [
+            Benchmark(
+                id="suite_success",
+                title="Suite success",
+                suite="minif2f_v2s",
+                difficulty="valid",
+                imports="",
+                statement="theorem suite_success : True := by",
+                source="unit-test",
+            ),
+            Benchmark(
+                id="suite_failed",
+                title="Suite failed",
+                suite="minif2f_v2s",
+                difficulty="valid",
+                imports="",
+                statement="theorem suite_failed : True := by",
+                source="unit-test",
+            ),
+        ]
+
+        original_verify = app.VERIFY_FN
+        original_get_provider = app.get_provider
+        original_trace_dir = app.TRACE_DIR
+        original_load_benchmarks = app.load_benchmarks
+        with tempfile.TemporaryDirectory() as tmp:
+            app.TRACE_DIR = Path(tmp)
+            app.get_provider = lambda name, model="": FakeProvider()
+            app.load_benchmarks = lambda suite="smoke": benchmarks
+
+            def verify(imports, statement, proof):
+                success = "suite_success" in statement
+                return LeanResult(success=success, status="success" if success else "failed", output="ok")
+
+            app.VERIFY_FN = verify
+            try:
+                with redirect_stdout(StringIO()):
+                    status, payload = app.api_response(
+                        "POST",
+                        "/api/run-suite",
+                        json.dumps({"suite": "minif2f_v2s", "provider": "openai"}).encode("utf-8"),
+                    )
+                replay_status, replay_payload = app.api_response(
+                    "POST",
+                    "/api/replay",
+                    json.dumps({"theorem_id": "suite_success"}).encode("utf-8"),
+                )
+            finally:
+                app.VERIFY_FN = original_verify
+                app.get_provider = original_get_provider
+                app.TRACE_DIR = original_trace_dir
+                app.load_benchmarks = original_load_benchmarks
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["score"]["solved"], 1)
+        self.assertEqual(payload["score"]["attempted"], 2)
+        self.assertEqual(payload["score"]["accuracy"], 0.5)
+        self.assertEqual([item["theorem_id"] for item in payload["results"]], ["suite_success", "suite_failed"])
+        self.assertEqual(replay_status, 200)
+        self.assertEqual(replay_payload["trace"]["theorem"]["id"], "suite_success")
+
+    def test_run_suite_logs_each_completed_call_to_stdout(self) -> None:
+        import app
+        from m8_proof_agent.models import Benchmark, LeanResult
+
+        benchmarks = [
+            Benchmark(
+                id="logged_one",
+                title="Logged one",
+                suite="minif2f_v2s",
+                difficulty="valid",
+                imports="",
+                statement="theorem logged_one : True := by",
+                source="unit-test",
+            ),
+            Benchmark(
+                id="logged_two",
+                title="Logged two",
+                suite="minif2f_v2s",
+                difficulty="valid",
+                imports="",
+                statement="theorem logged_two : True := by",
+                source="unit-test",
+            ),
+        ]
+
+        original_verify = app.VERIFY_FN
+        original_get_provider = app.get_provider
+        original_trace_dir = app.TRACE_DIR
+        original_load_benchmarks = app.load_benchmarks
+        stdout = StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            app.TRACE_DIR = Path(tmp)
+            app.get_provider = lambda name, model="": FakeProvider()
+            app.load_benchmarks = lambda suite="smoke": benchmarks
+            app.VERIFY_FN = lambda imports, statement, proof: LeanResult(success=True, status="success", output="ok")
+            try:
+                with redirect_stdout(stdout):
+                    status, _payload = app.api_response(
+                        "POST",
+                        "/api/run-suite",
+                        json.dumps({"suite": "minif2f_v2s", "provider": "openai"}).encode("utf-8"),
+                    )
+            finally:
+                app.VERIFY_FN = original_verify
+                app.get_provider = original_get_provider
+                app.TRACE_DIR = original_trace_dir
+                app.load_benchmarks = original_load_benchmarks
+
+        self.assertEqual(status, 200)
+        self.assertIn("[m8] suite minif2f_v2s 1/2 logged_one -> success", stdout.getvalue())
+        self.assertIn("[m8] suite minif2f_v2s 2/2 logged_two -> success", stdout.getvalue())
+
+    def test_stream_suite_lines_yields_each_result_then_score(self) -> None:
+        import app
+        from m8_proof_agent.models import Benchmark, LeanResult
+
+        benchmarks = [
+            Benchmark(
+                id="stream_one",
+                title="Stream one",
+                suite="minif2f_v2s",
+                difficulty="valid",
+                imports="",
+                statement="theorem stream_one : True := by",
+                source="unit-test",
+            ),
+            Benchmark(
+                id="stream_two",
+                title="Stream two",
+                suite="minif2f_v2s",
+                difficulty="valid",
+                imports="",
+                statement="theorem stream_two : True := by",
+                source="unit-test",
+            ),
+        ]
+
+        original_verify = app.VERIFY_FN
+        original_get_provider = app.get_provider
+        original_trace_dir = app.TRACE_DIR
+        original_load_benchmarks = app.load_benchmarks
+        with tempfile.TemporaryDirectory() as tmp:
+            app.TRACE_DIR = Path(tmp)
+            app.get_provider = lambda name, model="": FakeProvider()
+            app.load_benchmarks = lambda suite="smoke": benchmarks
+            app.VERIFY_FN = lambda imports, statement, proof: LeanResult(success=True, status="success", output="ok")
+            try:
+                with redirect_stdout(StringIO()):
+                    lines = list(
+                        app.stream_suite_lines(
+                            json.dumps({"suite": "minif2f_v2s", "provider": "openai"}).encode("utf-8")
+                        )
+                    )
+            finally:
+                app.VERIFY_FN = original_verify
+                app.get_provider = original_get_provider
+                app.TRACE_DIR = original_trace_dir
+                app.load_benchmarks = original_load_benchmarks
+
+        payloads = [json.loads(line.decode("utf-8")) for line in lines]
+        self.assertEqual([item["type"] for item in payloads], ["result", "result", "score"])
+        self.assertEqual(payloads[0]["result"]["theorem_id"], "stream_one")
+        self.assertEqual(payloads[1]["result"]["theorem_id"], "stream_two")
+        self.assertEqual(payloads[2]["score"]["solved"], 2)
+        self.assertEqual(payloads[2]["score"]["attempted"], 2)
+
+
+class FakeProvider:
+    name = "openai"
+    model = "gpt-test"
+
+    def generate_candidates(self, context):
+        from m8_proof_agent.models import ProofCandidate
+
+        return [ProofCandidate(proof="trivial", rationale="unit test")]
+
+
+def trace_payload(run_id: str, theorem_id: str):
+    return {
+        "run_id": run_id,
+        "theorem": {
+            "id": theorem_id,
+            "title": theorem_id,
+            "suite": "smoke",
+            "difficulty": "easy",
+            "imports": "",
+            "statement": f"theorem {theorem_id} : True := by",
+            "source": "unit-test",
+            "expected_tactics": ["trivial"],
+        },
+        "mode": "real",
+        "provider": "openai",
+        "model": "gpt-test",
+        "status": "success",
+        "events": [],
+        "attempts": [],
+        "final_proof": "trivial",
+        "error": "",
+        "elapsed_ms": 10,
+        "token_usage": {},
+    }
 
 
 if __name__ == "__main__":

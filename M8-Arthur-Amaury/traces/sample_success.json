@@ -13,8 +13,8 @@
     "description": "Small deterministic theorem for live checks."
   },
   "mode": "replay",
-  "provider": "demo",
-  "model": "deterministic",
+  "provider": "openai",
+  "model": "gpt-test",
   "status": "success",
   "events": [
     {

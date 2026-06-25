@@ -56,6 +56,17 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(theorem.imports, "import Mathlib")
         self.assertTrue(any("Nat.add_comm" in tactic for tactic in theorem.expected_tactics))
 
+    def test_minif2f_v2s_suite_loads_generated_benchmark(self) -> None:
+        from m8_proof_agent.benchmarks import find_benchmark, load_benchmarks
+
+        benchmarks = load_benchmarks(suite="minif2f_v2s")
+        theorem = find_benchmark("mathd_algebra_478", benchmarks)
+
+        self.assertEqual(len(benchmarks), 488)
+        self.assertEqual(theorem.suite, "minif2f_v2s")
+        self.assertIn("import Mathlib", theorem.imports)
+        self.assertIn("theorem mathd_algebra_478", theorem.statement)
+
 
 if __name__ == "__main__":
     unittest.main()

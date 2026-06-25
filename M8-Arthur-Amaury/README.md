@@ -35,12 +35,23 @@ M8-Arthur-Amaury/.venv/bin/python -m unittest discover -s M8-Arthur-Amaury/tests
 
 ## Modes
 
-- `replay`: loads a saved trace from `M8-Arthur-Amaury/traces/`.
+- `replay`: loads the newest saved trace from `M8-Arthur-Amaury/traces/`.
 - `real run`: calls a provider and verifies the candidate proof locally.
+- `Run suite`: runs every theorem in the selected suite, saves one trace per theorem, and reports solved/attempted accuracy. Click `Open` in the score table to inspect one theorem's latest saved trace.
 
-The bundled `demo` provider is deterministic and uses benchmark metadata. Configure `OPENAI_API_KEY`, `OPENAI_MODEL`, and optionally `OPENAI_BASE_URL` to use the OpenAI-compatible provider.
+Configure `OPENAI_API_KEY`, `OPENAI_MODEL`, and optionally `OPENAI_BASE_URL` to use OpenAI. Configure `MISTRAL_API_KEY`, `MISTRAL_MODEL`, and optionally `MISTRAL_BASE_URL` to add Mistral to the provider list.
 
 The app loads `M8-Arthur-Amaury/.env` automatically and does not overwrite variables already set in the shell.
+
+## miniF2F-v2
+
+The `minif2f_v2s` suite is generated from the simplified miniF2F-v2 dataset and contains 488 Lean 4 / Mathlib-style theorem statements. Refresh it with:
+
+```bash
+M8-Arthur-Amaury/.venv/bin/python M8-Arthur-Amaury/scripts/import_minif2f_v2.py --suite minif2f_v2s
+```
+
+The importer reads the dataset JSONL fields `name`, `split`, `header`, `formal_statement`, and informal statement text, then writes `M8-Arthur-Amaury/benchmarks/minif2f_v2s.json`.
 
 ## Mathlib / miniF2F
 

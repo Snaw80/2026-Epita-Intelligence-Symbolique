@@ -13,13 +13,14 @@ from urllib.parse import urlparse
 from m8_proof_agent.benchmarks import find_benchmark, load_all_benchmarks, load_benchmarks
 from m8_proof_agent.graph import langgraph_available, run_proof_graph
 from m8_proof_agent.models import Benchmark, RunRequest, model_to_dict
-from m8_proof_agent.providers import ProviderError, get_provider
-from m8_proof_agent.replay import list_traces, load_trace, resolve_trace
+from m8_proof_agent.providers import ProviderError, get_provider, provider_options
+from m8_proof_agent.replay import latest_trace_path, latest_trace_path_for_theorem, list_traces, load_trace, save_trace
 from m8_proof_agent.verifier import find_lean, verify_lean
 
 
 ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
+TRACE_DIR = ROOT / "traces"
 VERIFY_FN = verify_lean
 
 
@@ -72,22 +73,21 @@ def api_response(method: str, path: str, body: bytes) -> Tuple[int, Dict[str, An
             "lean": find_lean(),
             "lake": shutil.which("lake"),
             "langgraph_available": langgraph_available(),
-            "providers": {
-                "demo": True,
-                "openai_compatible": bool(os.getenv("OPENAI_API_KEY")),
-            },
+            "providers": provider_options(),
         }
 
     if method == "GET" and route == "/api/benchmarks":
         return 200, {"benchmarks": [model_to_dict(apply_environment_to_benchmark(item)) for item in load_all_benchmarks()]}
 
     if method == "GET" and route == "/api/traces":
-        return 200, {"traces": list_traces()}
+        return 200, {"traces": list_traces(TRACE_DIR)}
 
     if method == "POST" and route == "/api/replay":
         try:
             payload = _json_body(body)
-            trace = load_trace(resolve_trace(str(payload.get("trace") or "")))
+            theorem_id = str(payload.get("theorem_id") or "").strip()
+            path = latest_trace_path_for_theorem(theorem_id, TRACE_DIR) if theorem_id else latest_trace_path(TRACE_DIR)
+            trace = load_trace(path)
         except (ValueError, FileNotFoundError) as exc:
             return 400, {"error": str(exc)}
         return 200, {"trace": model_to_dict(trace)}
@@ -99,9 +99,48 @@ def api_response(method: str, path: str, body: bytes) -> Tuple[int, Dict[str, An
             theorem = apply_environment_to_benchmark(find_benchmark(request.theorem_id, load_benchmarks(suite=request.suite)))
             provider = get_provider(request.provider, request.model)
             trace = run_proof_graph(theorem, provider, verify_fn=VERIFY_FN, max_attempts=request.max_attempts)
+            save_trace(trace, TRACE_DIR)
         except (ValueError, KeyError, ProviderError) as exc:
             return 400, {"error": str(exc)}
         return 200, {"trace": model_to_dict(trace)}
+
+    if method == "POST" and route == "/api/run-suite":
+        try:
+            payload = _json_body(body)
+            request = RunRequest(theorem_id="suite", **{key: value for key, value in payload.items() if key != "theorem_id"})
+            benchmarks = [apply_environment_to_benchmark(item) for item in load_benchmarks(suite=request.suite)]
+            results = []
+            solved = 0
+            total = len(benchmarks)
+            for index, theorem in enumerate(benchmarks, start=1):
+                provider = get_provider(request.provider, request.model)
+                trace = run_proof_graph(theorem, provider, verify_fn=VERIFY_FN, max_attempts=request.max_attempts)
+                trace_path = save_trace(trace, TRACE_DIR)
+                print(f"[m8] suite {request.suite} {index}/{total} {theorem.id} -> {trace.status}", flush=True)
+                if trace.status == "success":
+                    solved += 1
+                results.append(
+                    {
+                        "theorem_id": theorem.id,
+                        "title": theorem.title,
+                        "status": trace.status,
+                        "run_id": trace.run_id,
+                        "trace_file": trace_path.name,
+                        "elapsed_ms": trace.elapsed_ms,
+                    }
+                )
+            attempted = len(results)
+        except (ValueError, KeyError, ProviderError) as exc:
+            return 400, {"error": str(exc)}
+        return 200, {
+            "score": {
+                "suite": request.suite,
+                "solved": solved,
+                "attempted": attempted,
+                "accuracy": (solved / attempted) if attempted else 0,
+            },
+            "results": results,
+        }
 
     return 404, {"error": f"No API route for {method} {route}"}
 
@@ -137,9 +176,62 @@ def stream_run_lines(body: bytes) -> Iterator[bytes]:
         max_attempts=request.max_attempts,
         event_sink=emit_event,
     )
+    save_trace(trace, TRACE_DIR)
     while queued:
         yield queued.pop(0)
     yield _ndjson({"type": "trace", "trace": model_to_dict(trace)})
+
+
+def stream_suite_lines(body: bytes) -> Iterator[bytes]:
+    load_dotenv()
+    try:
+        payload = _json_body(body)
+        request = RunRequest(theorem_id="suite", **{key: value for key, value in payload.items() if key != "theorem_id"})
+        benchmarks = [apply_environment_to_benchmark(item) for item in load_benchmarks(suite=request.suite)]
+    except (ValueError, KeyError, ProviderError) as exc:
+        yield _ndjson({"type": "error", "error": str(exc)})
+        return
+
+    solved = 0
+    total = len(benchmarks)
+    for index, theorem in enumerate(benchmarks, start=1):
+        try:
+            provider = get_provider(request.provider, request.model)
+            trace = run_proof_graph(theorem, provider, verify_fn=VERIFY_FN, max_attempts=request.max_attempts)
+            trace_path = save_trace(trace, TRACE_DIR)
+        except ProviderError as exc:
+            yield _ndjson({"type": "error", "error": str(exc)})
+            return
+        print(f"[m8] suite {request.suite} {index}/{total} {theorem.id} -> {trace.status}", flush=True)
+        if trace.status == "success":
+            solved += 1
+        yield _ndjson(
+            {
+                "type": "result",
+                "result": {
+                    "theorem_id": theorem.id,
+                    "title": theorem.title,
+                    "status": trace.status,
+                    "run_id": trace.run_id,
+                    "trace_file": trace_path.name,
+                    "elapsed_ms": trace.elapsed_ms,
+                    "index": index,
+                    "total": total,
+                },
+            }
+        )
+
+    yield _ndjson(
+        {
+            "type": "score",
+            "score": {
+                "suite": request.suite,
+                "solved": solved,
+                "attempted": total,
+                "accuracy": (solved / total) if total else 0,
+            },
+        }
+    )
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -184,6 +276,15 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self._stream_run(body)
             return
+        if urlparse(self.path).path == "/api/run-suite-stream":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            for line in stream_suite_lines(body):
+                self.wfile.write(line)
+                self.wfile.flush()
+            return
         status, payload = api_response("POST", self.path, body)
         self._send_json(status, payload)
 
@@ -209,6 +310,7 @@ class Handler(BaseHTTPRequestHandler):
             max_attempts=request.max_attempts,
             event_sink=emit_event,
         )
+        save_trace(trace, TRACE_DIR)
         self._write_stream_line({"type": "trace", "trace": model_to_dict(trace)})
 
     def log_message(self, fmt: str, *args: Any) -> None:

@@ -1,4 +1,4 @@
-const state = { benchmarks: [], traces: [], lastTrace: null, liveEvents: [], selectedEventIndex: null };
+const state = { benchmarks: [], providers: [], lastTrace: null, liveEvents: [], selectedEventIndex: null, suiteResults: [] };
 
 const $ = (id) => document.getElementById(id);
 
@@ -10,10 +10,25 @@ async function fetchJson(url, options) {
 }
 
 function renderHealth(payload) {
+  state.providers = payload.providers || [];
+  renderProviders();
   const lean = payload.lean ? 'Lean ready' : 'Replay ready';
   const graph = payload.langgraph_available ? 'LangGraph installed' : 'Graph fallback';
-  const openai = payload.providers.openai_compatible ? 'OpenAI configured' : 'Demo provider only';
-  $('health').textContent = `${lean} | ${graph} | ${openai}`;
+  const configured = state.providers.filter((provider) => provider.configured);
+  const providerText = configured.length
+    ? configured.map((provider) => provider.label).join(', ')
+    : 'No LLM provider configured';
+  $('health').textContent = `${lean} | ${graph} | ${providerText}`;
+}
+
+function renderProviders() {
+  $('provider').innerHTML = state.providers.map((provider) => `
+    <option value="${escapeHtml(provider.name)}" ${provider.configured ? '' : 'disabled'}>
+      ${escapeHtml(provider.label)}${provider.configured ? '' : ' (missing env)'}
+    </option>
+  `).join('');
+  const selected = state.providers.find((provider) => provider.configured) || state.providers[0];
+  if (selected) $('provider').value = selected.name;
 }
 
 function renderBenchmarks() {
@@ -29,10 +44,6 @@ function renderSelectedTheorem() {
   $('title').textContent = theorem.title;
   $('description').textContent = theorem.description || `${theorem.source} | ${theorem.difficulty}`;
   $('statement').textContent = `${theorem.imports ? theorem.imports + '\n\n' : ''}${theorem.statement}`;
-}
-
-function renderTraces() {
-  $('trace').innerHTML = state.traces.map((trace) => `<option value="${trace.file}">${trace.theorem_id} (${trace.status})</option>`).join('');
 }
 
 function renderTrace(trace) {
@@ -90,18 +101,22 @@ async function run() {
   $('summary').textContent = 'Starting...';
   try {
     if ($('mode').value === 'replay') {
-      const payload = await fetchJson('/api/replay', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ trace: $('trace').value }),
-      });
-      renderTrace(payload.trace);
+      await replayTrace();
       return;
     }
     await streamRun();
   } catch (error) {
     $('summary').textContent = error.message;
   }
+}
+
+async function replayTrace(theoremId = '') {
+  const payload = await fetchJson('/api/replay', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(theoremId ? { theorem_id: theoremId } : {}),
+  });
+  renderTrace(payload.trace);
 }
 
 async function streamRun() {
@@ -133,6 +148,92 @@ async function streamRun() {
     for (const line of lines) processStreamLine(line);
   }
   if (buffer.trim()) processStreamLine(buffer);
+}
+
+async function runSuite() {
+  resetLiveTrace();
+  $('summary').textContent = 'Running suite...';
+  state.suiteResults = [];
+  $('scorePanel').hidden = false;
+  $('scoreSummary').textContent = `${$('suite').value}: starting...`;
+  renderScoreRows();
+  try {
+    const response = await fetch('/api/run-suite-stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        suite: $('suite').value,
+        provider: $('provider').value,
+        max_attempts: Number($('maxAttempts').value),
+      }),
+    });
+    if (!response.ok || !response.body) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || response.statusText);
+    }
+    await processSuiteStream(response);
+  } catch (error) {
+    $('summary').textContent = error.message;
+  }
+}
+
+async function processSuiteStream(response) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) processSuiteLine(line);
+  }
+  if (buffer.trim()) processSuiteLine(buffer);
+}
+
+function processSuiteLine(line) {
+  if (!line.trim()) return;
+  const payload = JSON.parse(line);
+  if (payload.type === 'error') throw new Error(payload.error);
+  if (payload.type === 'result') {
+    state.suiteResults.push(payload.result);
+    renderScoreRows();
+    $('summary').textContent = `${payload.result.index}/${payload.result.total} ${payload.result.theorem_id} -> ${payload.result.status}`;
+    $('scoreSummary').textContent = `${$('suite').value}: ${state.suiteResults.length}/${payload.result.total} completed`;
+    return;
+  }
+  if (payload.type === 'score') {
+    $('scoreSummary').textContent = `${payload.score.suite}: ${payload.score.solved}/${payload.score.attempted} solved`;
+    $('summary').textContent = `${payload.score.solved}/${payload.score.attempted} solved (${Math.round(payload.score.accuracy * 100)}%)`;
+  }
+}
+
+function renderScore(payload) {
+  state.suiteResults = payload.results || [];
+  $('scorePanel').hidden = false;
+  $('scoreSummary').textContent = `${payload.score.suite}: ${payload.score.solved}/${payload.score.attempted} solved`;
+  renderScoreRows();
+}
+
+function renderScoreRows() {
+  $('scoreTable').innerHTML = `
+    <div class="score-row score-header">
+      <span>Problem</span>
+      <span>Status</span>
+      <span>Trace</span>
+    </div>
+    ${state.suiteResults.map((item) => `
+      <div class="score-row">
+        <span>${escapeHtml(item.title || item.theorem_id)}</span>
+        <span class="status ${escapeHtml(item.status)}">${escapeHtml(item.status)}</span>
+        <button class="trace-open" type="button" data-theorem="${escapeHtml(item.theorem_id)}">Open</button>
+      </div>
+    `).join('')}
+  `;
+  [...document.querySelectorAll('.trace-open')].forEach((node) => {
+    node.addEventListener('click', () => replayTrace(node.dataset.theorem));
+  });
 }
 
 function processStreamLine(line) {
@@ -182,13 +283,12 @@ function downloadTrace() {
 async function init() {
   renderHealth(await fetchJson('/api/health'));
   state.benchmarks = (await fetchJson('/api/benchmarks')).benchmarks;
-  state.traces = (await fetchJson('/api/traces')).traces;
   renderBenchmarks();
-  renderTraces();
 }
 
 $('suite').addEventListener('change', renderBenchmarks);
 $('theorem').addEventListener('change', renderSelectedTheorem);
 $('run').addEventListener('click', run);
+$('runSuite').addEventListener('click', runSuite);
 $('download').addEventListener('click', downloadTrace);
 init().catch((error) => { $('summary').textContent = error.message; });

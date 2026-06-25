@@ -122,6 +122,58 @@ pre {
   gap: 16px;
 }
 
+.score-panel {
+  margin: 0 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.score-summary {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: #f9fbff;
+  font-weight: 800;
+}
+
+.score-table {
+  display: grid;
+}
+
+.score-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px 80px;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.score-row:last-child {
+  border-bottom: 0;
+}
+
+.score-header {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.status {
+  font-weight: 800;
+}
+
+.status.success {
+  color: #087443;
+}
+
+.trace-open {
+  width: auto;
+  margin: 0;
+  padding: 6px 9px;
+}
+
 .trace-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 420px);

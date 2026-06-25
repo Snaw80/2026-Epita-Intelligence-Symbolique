@@ -83,7 +83,7 @@ class RunRequest(BaseModel):
     theorem_id: str
     suite: str = "smoke"
     mode: Mode = "real"
-    provider: str = "demo"
+    provider: str = "openai"
     model: str = ""
     max_attempts: int = 3
     replay_trace: Optional[str] = None

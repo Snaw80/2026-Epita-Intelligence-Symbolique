@@ -21,6 +21,7 @@
             <select id="suite">
               <option value="smoke">smoke</option>
               <option value="minif2f_subset">miniF2F subset</option>
+              <option value="minif2f_v2s">miniF2F v2s</option>
             </select>
           </label>
           <label>Theorem
@@ -32,19 +33,14 @@
               <option value="real">real run</option>
             </select>
           </label>
-          <label>Trace
-            <select id="trace"></select>
-          </label>
           <label>Provider
-            <select id="provider">
-              <option value="demo">demo</option>
-              <option value="openai_compatible">openai compatible</option>
-            </select>
+            <select id="provider"></select>
           </label>
           <label>Max attempts
             <input id="maxAttempts" type="number" min="1" max="8" value="3">
           </label>
           <button id="run">Run</button>
+          <button id="runSuite">Run suite</button>
           <button id="download" disabled>Download trace</button>
         </aside>
 
@@ -59,6 +55,10 @@
         <div class="results-head">
           <h2>Proof Trace</h2>
           <p id="summary">No run yet.</p>
+        </div>
+        <div id="scorePanel" class="score-panel" hidden>
+          <div id="scoreSummary" class="score-summary"></div>
+          <div id="scoreTable" class="score-table"></div>
         </div>
         <div class="trace-grid">
           <div>
