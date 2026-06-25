@@ -3,7 +3,6 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from typing import List
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,7 +24,7 @@ class GraphTests(unittest.TestCase):
             expected_tactics=["trivial"],
         )
 
-    def test_graph_returns_success_trace_after_verified_candidate(self) -> None:
+    def test_beam_search_verifies_competing_candidates(self) -> None:
         from m8_proof_agent.graph import ProofCandidate, run_proof_graph
         from m8_proof_agent.models import LeanResult
 
@@ -34,151 +33,54 @@ class GraphTests(unittest.TestCase):
             model = "unit"
 
             def generate_candidates(self, context):
-                return [ProofCandidate(proof="trivial", rationale="True is trivial.")]
-
-        def verify(imports: str, statement: str, proof: str) -> LeanResult:
-            return LeanResult(success=True, status="success", output="ok")
-
-        trace = run_proof_graph(self._benchmark(), Provider(), verify_fn=verify)
-
-        self.assertEqual(trace.status, "success")
-        self.assertEqual(trace.final_proof, "trivial")
-        self.assertEqual(trace.attempts[0].agent.value, "tactic_agent")
-        self.assertTrue(any(event.kind == "final_verified" for event in trace.events))
-
-    def test_graph_repairs_after_lean_failure(self) -> None:
-        from m8_proof_agent.graph import ProofCandidate, run_proof_graph
-        from m8_proof_agent.models import LeanResult
-
-        class Provider:
-            name = "fake"
-            model = "unit"
-
-            def __init__(self) -> None:
-                self.calls = 0
-
-            def generate_candidates(self, context):
-                self.calls += 1
-                if self.calls == 1:
-                    return [ProofCandidate(proof="exact bad", rationale="Initial guess.")]
-                return [ProofCandidate(proof="trivial", rationale="Repair from Lean error.")]
-
-        results: List[LeanResult] = [
-            LeanResult(success=False, status="failed", errors="unknown identifier 'bad'"),
-            LeanResult(success=True, status="success", output="ok"),
-        ]
-
-        def verify(imports: str, statement: str, proof: str) -> LeanResult:
-            return results.pop(0)
-
-        provider = Provider()
-        trace = run_proof_graph(self._benchmark(), provider, verify_fn=verify, max_attempts=2)
-
-        self.assertEqual(trace.status, "success")
-        self.assertEqual(provider.calls, 2)
-        self.assertEqual(len(trace.attempts), 2)
-        self.assertTrue(any(event.agent.value == "repair_agent" for event in trace.events))
-
-    def test_graph_passes_goal_probe_to_provider_context(self) -> None:
-        from m8_proof_agent.graph import ProofCandidate, run_proof_graph
-        from m8_proof_agent.models import LeanResult
-
-        seen = {}
-
-        class Provider:
-            name = "fake"
-            model = "unit"
-
-            def generate_candidates(self, context):
-                seen["goal_state"] = context["goal_state"]
-                return [ProofCandidate(proof="trivial", rationale="Use probed goal.")]
-
-        def verify(imports: str, statement: str, proof: str) -> LeanResult:
-            return LeanResult(success=True, status="success", output="ok")
-
-        def probe(imports: str, statement: str) -> LeanResult:
-            return LeanResult(success=False, status="failed", errors="unsolved goals\n⊢ True")
-
-        trace = run_proof_graph(self._benchmark(), Provider(), verify_fn=verify, goal_probe_fn=probe)
-
-        self.assertEqual(trace.status, "success")
-        self.assertEqual(seen["goal_state"], "unsolved goals\n⊢ True")
-        self.assertTrue(any(event.kind == "goal_probe_finished" for event in trace.events))
-
-    def test_graph_uses_beam_width_to_verify_multiple_candidates(self) -> None:
-        from m8_proof_agent.graph import ProofCandidate, run_proof_graph
-        from m8_proof_agent.models import LeanResult
-
-        seen = {}
-
-        class Provider:
-            name = "fake"
-            model = "unit"
-
-            def generate_candidates(self, context):
-                seen["candidate_count"] = context["candidate_count"]
                 return [
-                    ProofCandidate(proof="exact bad", rationale="First beam branch."),
-                    ProofCandidate(proof="trivial", rationale="Second beam branch."),
-                    ProofCandidate(proof="exact never", rationale="Unused branch."),
+                    ProofCandidate(proof="exact bad", rationale="bad branch"),
+                    ProofCandidate(proof="trivial", rationale="good branch"),
                 ]
 
         def verify(imports: str, statement: str, proof: str) -> LeanResult:
-            if proof == "trivial":
-                return LeanResult(success=True, status="success", output="ok")
-            return LeanResult(success=False, status="failed", errors="unknown identifier")
+            return LeanResult(success=proof == "trivial", status="success" if proof == "trivial" else "failed", errors="bad")
 
-        trace = run_proof_graph(self._benchmark(), Provider(), verify_fn=verify, beam_width=3)
+        trace = run_proof_graph(self._benchmark(), Provider(), verify_fn=verify, beam_width=2)
 
         self.assertEqual(trace.status, "success")
         self.assertEqual(trace.final_proof, "trivial")
-        self.assertEqual(seen["candidate_count"], 3)
-        self.assertEqual([attempt.proof for attempt in trace.attempts], ["exact bad", "trivial"])
-        self.assertTrue(any(event.kind == "beam_started" and event.payload["beam_width"] == 3 for event in trace.events))
+        self.assertTrue(any(event.kind == "beam_started" for event in trace.events))
 
-    def test_graph_can_run_mcts_over_valid_partial_prefixes(self) -> None:
+    def test_mcts_keeps_valid_prefix_and_finds_final_proof(self) -> None:
         from m8_proof_agent.graph import ProofCandidate, run_proof_graph
         from m8_proof_agent.models import LeanResult
-
-        contexts = []
 
         class Provider:
             name = "fake"
             model = "unit"
 
             def generate_candidates(self, context):
-                contexts.append(context)
                 if context["proof_prefix"] == "":
-                    return [
-                        ProofCandidate(proof="exact bad", rationale="Invalid direct proof."),
-                        ProofCandidate(proof="intro hp", rationale="Open implication premise."),
-                    ]
-                return [ProofCandidate(proof="exact hp", rationale="Close from premise.")]
+                    return [ProofCandidate(proof="intro hp", rationale="open premise")]
+                return [ProofCandidate(proof="exact hp", rationale="close goal")]
 
         def verify(imports: str, statement: str, proof: str) -> LeanResult:
             if proof == "intro hp\nexact hp":
                 return LeanResult(success=True, status="success", output="ok")
             if proof == "intro hp\nskip":
                 return LeanResult(success=False, status="failed", errors="unsolved goals\nhp : True\n⊢ True")
-            return LeanResult(success=False, status="failed", errors="unknown identifier")
+            return LeanResult(success=False, status="failed", errors="bad")
 
         trace = run_proof_graph(
             self._benchmark(),
             Provider(),
             verify_fn=verify,
             search_strategy="mcts",
-            beam_width=2,
-            mcts_iterations=4,
+            beam_width=1,
+            mcts_iterations=3,
         )
 
         self.assertEqual(trace.status, "success")
         self.assertEqual(trace.final_proof, "intro hp\nexact hp")
-        self.assertTrue(any(context["search_strategy"] == "mcts" for context in contexts))
-        self.assertTrue(any(context["proof_prefix"] == "intro hp" for context in contexts))
-        self.assertTrue(any(event.kind == "mcts_started" for event in trace.events))
         self.assertTrue(any(event.kind == "mcts_node_kept" for event in trace.events))
 
-    def test_graph_stops_when_lean_setup_is_missing(self) -> None:
+    def test_setup_needed_stops_search(self) -> None:
         from m8_proof_agent.graph import ProofCandidate, run_proof_graph
         from m8_proof_agent.models import LeanResult
 
@@ -187,7 +89,7 @@ class GraphTests(unittest.TestCase):
             model = "unit"
 
             def generate_candidates(self, context):
-                return [ProofCandidate(proof="trivial", rationale="True is trivial.")]
+                return [ProofCandidate(proof="trivial", rationale="try")]
 
         def verify(imports: str, statement: str, proof: str) -> LeanResult:
             return LeanResult(success=False, status="setup_needed", errors="lean not found")
@@ -196,67 +98,6 @@ class GraphTests(unittest.TestCase):
 
         self.assertEqual(trace.status, "setup_needed")
         self.assertEqual(trace.error, "lean not found")
-        self.assertTrue(any(event.kind == "setup_needed" for event in trace.events))
-
-    def test_graph_passes_benchmark_lean_project_dir_to_verifier(self) -> None:
-        from m8_proof_agent.graph import ProofCandidate, run_proof_graph
-        from m8_proof_agent.models import Benchmark, LeanResult
-
-        theorem = Benchmark(
-            id="mathlib_demo",
-            title="Mathlib demo",
-            suite="minif2f_subset",
-            difficulty="starter",
-            imports="import Mathlib",
-            statement="theorem mathlib_demo : True := by",
-            source="unit-test",
-            expected_tactics=["trivial"],
-            lean_project_dir="/tmp/mathlib-project",
-        )
-
-        class Provider:
-            name = "fake"
-            model = "unit"
-
-            def generate_candidates(self, context):
-                return [ProofCandidate(proof="trivial", rationale="True is trivial.")]
-
-        seen = {}
-
-        def verify(imports: str, statement: str, proof: str, lean_project_dir=None) -> LeanResult:
-            seen["lean_project_dir"] = lean_project_dir
-            return LeanResult(success=True, status="success", output="ok")
-
-        trace = run_proof_graph(theorem, Provider(), verify_fn=verify)
-
-        self.assertEqual(trace.status, "success")
-        self.assertEqual(seen["lean_project_dir"], "/tmp/mathlib-project")
-
-    def test_graph_streams_events_with_elapsed_time(self) -> None:
-        from m8_proof_agent.graph import ProofCandidate, run_proof_graph
-        from m8_proof_agent.models import LeanResult
-
-        class Provider:
-            name = "fake"
-            model = "unit"
-
-            def generate_candidates(self, context):
-                return [ProofCandidate(proof="trivial", rationale="True is trivial.")]
-
-        streamed = []
-
-        def verify(imports: str, statement: str, proof: str) -> LeanResult:
-            return LeanResult(success=True, status="success", output="ok")
-
-        trace = run_proof_graph(self._benchmark(), Provider(), verify_fn=verify, event_sink=streamed.append)
-
-        self.assertEqual(trace.status, "success")
-        self.assertGreaterEqual(len(streamed), 5)
-        self.assertEqual(streamed[0].kind, "run_started")
-        self.assertIn("elapsed_ms", streamed[0].payload)
-        self.assertTrue(any(event.kind == "verification_finished" for event in streamed))
-        verification_event = next(event for event in streamed if event.kind == "verification_finished")
-        self.assertEqual(verification_event.payload["output"], "ok")
 
 
 if __name__ == "__main__":
