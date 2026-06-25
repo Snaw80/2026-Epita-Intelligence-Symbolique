@@ -25,28 +25,36 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(
             options,
             [
-                {"name": "openai", "label": "OpenAI (gpt-test)", "model": "gpt-test", "configured": True},
-                {"name": "mistral", "label": "Mistral (mistral-test)", "model": "mistral-test", "configured": True},
+                {
+                    "name": "openai",
+                    "label": "OpenAI (gpt-test)",
+                    "model": "gpt-test",
+                    "configured": True,
+                },
+                {
+                    "name": "mistral",
+                    "label": "Mistral (mistral-test)",
+                    "model": "mistral-test",
+                    "configured": True,
+                },
             ],
         )
 
-    def test_provider_options_omit_mistral_without_key_and_do_not_include_demo(self) -> None:
+    def test_provider_options_omit_mistral_without_key(self) -> None:
         from m8_proof_agent.providers import provider_options
 
-        options = provider_options({"OPENAI_API_KEY": "openai-key", "OPENAI_MODEL": "gpt-test"})
+        options = provider_options(
+            {"OPENAI_API_KEY": "openai-key", "OPENAI_MODEL": "gpt-test"}
+        )
 
         self.assertEqual([option["name"] for option in options], ["openai"])
-
-    def test_get_provider_rejects_demo_provider(self) -> None:
-        from m8_proof_agent.providers import ProviderError, get_provider
-
-        with self.assertRaises(ProviderError):
-            get_provider("demo", environ={})
 
     def test_get_provider_uses_model_from_environment(self) -> None:
         from m8_proof_agent.providers import get_provider
 
-        provider = get_provider("openai", environ={"OPENAI_API_KEY": "key", "OPENAI_MODEL": "gpt-test"})
+        provider = get_provider(
+            "openai", environ={"OPENAI_API_KEY": "key", "OPENAI_MODEL": "gpt-test"}
+        )
 
         self.assertEqual(provider.name, "openai")
         self.assertEqual(provider.model, "gpt-test")

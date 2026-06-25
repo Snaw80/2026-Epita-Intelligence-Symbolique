@@ -110,6 +110,23 @@ def verify_lean(
     )
 
 
+def probe_lean_goal(
+    imports: str,
+    statement: str,
+    lean_project_dir: str | None = None,
+    runner: CommandRunner = subprocess.run,
+    timeout: int = 20,
+) -> LeanResult:
+    return verify_lean(
+        imports,
+        statement,
+        "skip",
+        lean_project_dir=lean_project_dir,
+        runner=runner,
+        timeout=timeout,
+    )
+
+
 def requires_lake_project(imports: str) -> bool:
     return any(line.strip().startswith("import Mathlib") for line in imports.splitlines())
 

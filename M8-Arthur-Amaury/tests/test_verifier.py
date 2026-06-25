@@ -40,6 +40,27 @@ class VerifierTests(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertEqual(result.errors, "unknown module prefix 'Mathlib'")
 
+    def test_probe_lean_goal_uses_skip_to_capture_unsolved_goals(self) -> None:
+        from m8_proof_agent import verifier
+
+        original_find_lean = verifier.find_lean
+        verifier.find_lean = lambda: "/usr/bin/lean"
+        seen = {}
+
+        def runner(*args, **kwargs):
+            source = Path(args[0][-1]).read_text(encoding="utf-8")
+            seen["source"] = source
+            return subprocess.CompletedProcess(args[0], 1, stdout="", stderr="unsolved goals\n⊢ True")
+
+        try:
+            result = verifier.probe_lean_goal("", "theorem t : True := by", runner=runner)
+        finally:
+            verifier.find_lean = original_find_lean
+
+        self.assertIn("skip", seen["source"])
+        self.assertFalse(result.success)
+        self.assertEqual(result.errors, "unsolved goals\n⊢ True")
+
     def test_mathlib_import_without_project_returns_setup_needed(self) -> None:
         from m8_proof_agent import verifier
 

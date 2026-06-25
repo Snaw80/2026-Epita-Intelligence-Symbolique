@@ -5,10 +5,11 @@ Fresh demo app for **M8 - Demonstration automatique neuro-symbolique : agent LLM
 The demo uses a multi-agent proof loop:
 
 1. The orchestrator loads a theorem from the smoke suite or the miniF2F starter subset.
-2. Proof agents propose Lean tactic bodies.
-3. Lean verifies each candidate through `lean` or `lake env lean`.
-4. Failed Lean output is fed to the repair loop.
-5. Successful runs are represented as JSON traces and can be replayed during the presentation.
+2. Lean probes the initial goal state so the prompt includes hypotheses and the target before the first tactic.
+3. Proof agents propose a beam of Lean tactic bodies instead of a single linear guess.
+4. Lean verifies each candidate through `lean` or `lake env lean`.
+5. Failed Lean output is fed to the repair loop.
+6. Successful runs are represented as JSON traces and can be replayed during the presentation.
 
 Lean is the trust boundary: agents propose, Lean verifies.
 
@@ -38,6 +39,13 @@ M8-Arthur-Amaury/.venv/bin/python -m unittest discover -s M8-Arthur-Amaury/tests
 - `replay`: loads the newest saved trace from `M8-Arthur-Amaury/traces/`.
 - `real run`: calls a provider and verifies the candidate proof locally.
 - `Run suite`: runs every theorem in the selected suite, saves one trace per theorem, and reports solved/attempted accuracy. Click `Open` in the score table to inspect one theorem's latest saved trace.
+- `Beam width`: controls how many candidates compete per iteration. Width 1 is the linear retry baseline; wider beams show several branches verified by Lean before repair.
+
+The benchmark suites are intentionally split for the 10-minute demo:
+
+- `smoke`: 3 fast local Lean checks for plumbing and trace walkthroughs.
+- `minif2f_subset`: 8 curated pure Lean / Mathlib items for a live demo-sized benchmark.
+- `minif2f_v2s`: 488 generated miniF2F-v2 statements for longer offline evaluation.
 
 Configure `OPENAI_API_KEY`, `OPENAI_MODEL`, and optionally `OPENAI_BASE_URL` to use OpenAI. Configure `MISTRAL_API_KEY`, `MISTRAL_MODEL`, and optionally `MISTRAL_BASE_URL` to add Mistral to the provider list.
 

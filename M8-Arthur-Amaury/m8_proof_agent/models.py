@@ -86,11 +86,14 @@ class RunRequest(BaseModel):
     provider: str = "openai"
     model: str = ""
     max_attempts: int = 3
+    beam_width: int = 1
     replay_trace: Optional[str] = None
 
     def __init__(self, **data: Any) -> None:
         if "max_attempts" in data:
             data["max_attempts"] = max(1, min(int(data["max_attempts"]), 8))
+        if "beam_width" in data:
+            data["beam_width"] = max(1, min(int(data["beam_width"]), 5))
         super().__init__(**data)
 
 

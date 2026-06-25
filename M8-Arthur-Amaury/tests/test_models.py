@@ -78,6 +78,15 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(too_low.max_attempts, 1)
         self.assertEqual(too_high.max_attempts, 8)
 
+    def test_run_request_clamps_beam_width(self) -> None:
+        from m8_proof_agent.models import RunRequest
+
+        too_low = RunRequest(theorem_id="x", beam_width=0)
+        too_high = RunRequest(theorem_id="x", beam_width=99)
+
+        self.assertEqual(too_low.beam_width, 1)
+        self.assertEqual(too_high.beam_width, 5)
+
     def test_run_request_leaves_model_empty_so_provider_can_use_env(self) -> None:
         from m8_proof_agent.models import RunRequest
 

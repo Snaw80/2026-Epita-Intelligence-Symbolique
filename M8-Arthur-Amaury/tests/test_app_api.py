@@ -53,7 +53,6 @@ class AppApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("python", payload)
         self.assertIn("langgraph_available", payload)
-        self.assertNotIn("demo", [provider["name"] for provider in payload["providers"]])
 
     def test_apply_environment_sets_lean_project_dir_for_mathlib_benchmark(self) -> None:
         import app

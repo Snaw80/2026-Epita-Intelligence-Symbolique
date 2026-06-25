@@ -15,13 +15,14 @@ from m8_proof_agent.graph import langgraph_available, run_proof_graph
 from m8_proof_agent.models import Benchmark, RunRequest, model_to_dict
 from m8_proof_agent.providers import ProviderError, get_provider, provider_options
 from m8_proof_agent.replay import latest_trace_path, latest_trace_path_for_theorem, list_traces, load_trace, save_trace
-from m8_proof_agent.verifier import find_lean, verify_lean
+from m8_proof_agent.verifier import find_lean, probe_lean_goal, verify_lean
 
 
 ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
 TRACE_DIR = ROOT / "traces"
 VERIFY_FN = verify_lean
+GOAL_PROBE_FN = probe_lean_goal
 
 
 def load_dotenv(path: Path | str = ROOT / ".env", environ: Dict[str, str] = os.environ) -> None:
@@ -98,7 +99,14 @@ def api_response(method: str, path: str, body: bytes) -> Tuple[int, Dict[str, An
             request = RunRequest(**payload)
             theorem = apply_environment_to_benchmark(find_benchmark(request.theorem_id, load_benchmarks(suite=request.suite)))
             provider = get_provider(request.provider, request.model)
-            trace = run_proof_graph(theorem, provider, verify_fn=VERIFY_FN, max_attempts=request.max_attempts)
+            trace = run_proof_graph(
+                theorem,
+                provider,
+                verify_fn=VERIFY_FN,
+                max_attempts=request.max_attempts,
+                beam_width=request.beam_width,
+                goal_probe_fn=GOAL_PROBE_FN,
+            )
             save_trace(trace, TRACE_DIR)
         except (ValueError, KeyError, ProviderError) as exc:
             return 400, {"error": str(exc)}
@@ -114,7 +122,14 @@ def api_response(method: str, path: str, body: bytes) -> Tuple[int, Dict[str, An
             total = len(benchmarks)
             for index, theorem in enumerate(benchmarks, start=1):
                 provider = get_provider(request.provider, request.model)
-                trace = run_proof_graph(theorem, provider, verify_fn=VERIFY_FN, max_attempts=request.max_attempts)
+                trace = run_proof_graph(
+                    theorem,
+                    provider,
+                    verify_fn=VERIFY_FN,
+                    max_attempts=request.max_attempts,
+                    beam_width=request.beam_width,
+                    goal_probe_fn=GOAL_PROBE_FN,
+                )
                 trace_path = save_trace(trace, TRACE_DIR)
                 print(f"[m8] suite {request.suite} {index}/{total} {theorem.id} -> {trace.status}", flush=True)
                 if trace.status == "success":
@@ -174,6 +189,8 @@ def stream_run_lines(body: bytes) -> Iterator[bytes]:
         provider,
         verify_fn=VERIFY_FN,
         max_attempts=request.max_attempts,
+        beam_width=request.beam_width,
+        goal_probe_fn=GOAL_PROBE_FN,
         event_sink=emit_event,
     )
     save_trace(trace, TRACE_DIR)
@@ -197,7 +214,14 @@ def stream_suite_lines(body: bytes) -> Iterator[bytes]:
     for index, theorem in enumerate(benchmarks, start=1):
         try:
             provider = get_provider(request.provider, request.model)
-            trace = run_proof_graph(theorem, provider, verify_fn=VERIFY_FN, max_attempts=request.max_attempts)
+            trace = run_proof_graph(
+                theorem,
+                provider,
+                verify_fn=VERIFY_FN,
+                max_attempts=request.max_attempts,
+                beam_width=request.beam_width,
+                goal_probe_fn=GOAL_PROBE_FN,
+            )
             trace_path = save_trace(trace, TRACE_DIR)
         except ProviderError as exc:
             yield _ndjson({"type": "error", "error": str(exc)})
@@ -308,6 +332,8 @@ class Handler(BaseHTTPRequestHandler):
             provider,
             verify_fn=VERIFY_FN,
             max_attempts=request.max_attempts,
+            beam_width=request.beam_width,
+            goal_probe_fn=GOAL_PROBE_FN,
             event_sink=emit_event,
         )
         save_trace(trace, TRACE_DIR)

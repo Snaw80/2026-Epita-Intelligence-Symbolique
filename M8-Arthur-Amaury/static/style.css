@@ -49,6 +49,11 @@ h3 { margin: 18px 0 8px; }
   color: var(--muted);
 }
 
+.subtitle {
+  margin-bottom: 0;
+  max-width: 680px;
+}
+
 .pill {
   padding: 10px 12px;
   border: 1px solid var(--line);
@@ -63,6 +68,42 @@ h3 { margin: 18px 0 8px; }
   grid-template-columns: 280px 1fr;
   gap: 16px;
   margin-bottom: 16px;
+}
+
+.method-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.method-strip > div {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 14px;
+}
+
+.method-strip strong {
+  display: block;
+  margin: 3px 0 6px;
+  font-size: 16px;
+}
+
+.method-strip p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.metric-label {
+  display: block;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .controls, .problem, .results {
@@ -103,6 +144,17 @@ button {
 button:disabled {
   cursor: not-allowed;
   opacity: .55;
+}
+
+.run-budget {
+  margin: 0 0 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f9fbff;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
 }
 
 pre {
@@ -229,6 +281,7 @@ pre {
 
 @media (max-width: 780px) {
   .topbar, .results-head { display: block; }
+  .method-strip { grid-template-columns: 1fr; }
   .workspace { grid-template-columns: 1fr; }
   .trace-grid { grid-template-columns: 1fr; }
   .detail-panel { position: static; }

@@ -79,6 +79,63 @@ class GraphTests(unittest.TestCase):
         self.assertEqual(len(trace.attempts), 2)
         self.assertTrue(any(event.agent.value == "repair_agent" for event in trace.events))
 
+    def test_graph_passes_goal_probe_to_provider_context(self) -> None:
+        from m8_proof_agent.graph import ProofCandidate, run_proof_graph
+        from m8_proof_agent.models import LeanResult
+
+        seen = {}
+
+        class Provider:
+            name = "fake"
+            model = "unit"
+
+            def generate_candidates(self, context):
+                seen["goal_state"] = context["goal_state"]
+                return [ProofCandidate(proof="trivial", rationale="Use probed goal.")]
+
+        def verify(imports: str, statement: str, proof: str) -> LeanResult:
+            return LeanResult(success=True, status="success", output="ok")
+
+        def probe(imports: str, statement: str) -> LeanResult:
+            return LeanResult(success=False, status="failed", errors="unsolved goals\n⊢ True")
+
+        trace = run_proof_graph(self._benchmark(), Provider(), verify_fn=verify, goal_probe_fn=probe)
+
+        self.assertEqual(trace.status, "success")
+        self.assertEqual(seen["goal_state"], "unsolved goals\n⊢ True")
+        self.assertTrue(any(event.kind == "goal_probe_finished" for event in trace.events))
+
+    def test_graph_uses_beam_width_to_verify_multiple_candidates(self) -> None:
+        from m8_proof_agent.graph import ProofCandidate, run_proof_graph
+        from m8_proof_agent.models import LeanResult
+
+        seen = {}
+
+        class Provider:
+            name = "fake"
+            model = "unit"
+
+            def generate_candidates(self, context):
+                seen["candidate_count"] = context["candidate_count"]
+                return [
+                    ProofCandidate(proof="exact bad", rationale="First beam branch."),
+                    ProofCandidate(proof="trivial", rationale="Second beam branch."),
+                    ProofCandidate(proof="exact never", rationale="Unused branch."),
+                ]
+
+        def verify(imports: str, statement: str, proof: str) -> LeanResult:
+            if proof == "trivial":
+                return LeanResult(success=True, status="success", output="ok")
+            return LeanResult(success=False, status="failed", errors="unknown identifier")
+
+        trace = run_proof_graph(self._benchmark(), Provider(), verify_fn=verify, beam_width=3)
+
+        self.assertEqual(trace.status, "success")
+        self.assertEqual(trace.final_proof, "trivial")
+        self.assertEqual(seen["candidate_count"], 3)
+        self.assertEqual([attempt.proof for attempt in trace.attempts], ["exact bad", "trivial"])
+        self.assertTrue(any(event.kind == "beam_started" and event.payload["beam_width"] == 3 for event in trace.events))
+
     def test_graph_stops_when_lean_setup_is_missing(self) -> None:
         from m8_proof_agent.graph import ProofCandidate, run_proof_graph
         from m8_proof_agent.models import LeanResult

@@ -11,17 +11,36 @@
       <header class="topbar">
         <div>
           <h1>Multi-Agent Lean Proof Agent</h1>
+          <p class="subtitle">LLM candidates are searched in a beam; Lean probes goals and verifies every accepted proof.</p>
         </div>
         <div id="health" class="pill">Checking...</div>
       </header>
+
+      <section class="method-strip" aria-label="Method comparison">
+        <div>
+          <span class="metric-label">Goal context</span>
+          <strong>Lean goal probe</strong>
+          <p>Before generation, Lean returns the current goal and hypotheses as prompt context.</p>
+        </div>
+        <div>
+          <span class="metric-label">Search</span>
+          <strong id="searchSummary">Beam width 3</strong>
+          <p id="searchComparison">Compared with linear retry, several candidates compete each iteration.</p>
+        </div>
+        <div>
+          <span class="metric-label">Benchmark</span>
+          <strong id="suiteSummary">Select a suite</strong>
+          <p id="suiteComparison">Smoke is fast, subset is curated, full miniF2F-v2s is long evaluation.</p>
+        </div>
+      </section>
 
       <section class="workspace">
         <aside class="controls">
           <label>Benchmark
             <select id="suite">
-              <option value="smoke">smoke</option>
-              <option value="minif2f_subset">miniF2F subset</option>
-              <option value="minif2f_v2s">miniF2F v2s</option>
+              <option value="smoke">Smoke: fast plumbing</option>
+              <option value="minif2f_subset">miniF2F subset: curated benchmark</option>
+              <option value="minif2f_v2s">miniF2F v2s: full 488</option>
             </select>
           </label>
           <label>Theorem
@@ -39,6 +58,10 @@
           <label>Max attempts
             <input id="maxAttempts" type="number" min="1" max="8" value="3">
           </label>
+          <label>Beam width
+            <input id="beamWidth" type="number" min="1" max="5" value="3">
+          </label>
+          <div id="runBudget" class="run-budget">Up to 9 candidate verifications per theorem.</div>
           <button id="run">Run</button>
           <button id="runSuite">Run suite</button>
           <button id="download" disabled>Download trace</button>

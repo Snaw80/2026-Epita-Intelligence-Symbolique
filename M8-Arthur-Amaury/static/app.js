@@ -2,6 +2,21 @@ const state = { benchmarks: [], providers: [], lastTrace: null, liveEvents: [], 
 
 const $ = (id) => document.getElementById(id);
 
+const suiteCopy = {
+  smoke: {
+    summary: 'Smoke: 3 fast local theorems',
+    comparison: 'Use this for quick plumbing checks and live proof-trace walkthroughs.',
+  },
+  minif2f_subset: {
+    summary: 'miniF2F subset: 8 curated problems',
+    comparison: 'Curated mix of pure Lean plus Mathlib arithmetic and algebra.',
+  },
+  minif2f_v2s: {
+    summary: 'miniF2F v2s: 488 full items',
+    comparison: 'Use this for offline evaluation; it is intentionally too long for a live run.',
+  },
+};
+
 async function fetchJson(url, options) {
   const response = await fetch(url, options);
   const payload = await response.json();
@@ -35,6 +50,7 @@ function renderBenchmarks() {
   const suite = $('suite').value;
   const items = state.benchmarks.filter((item) => item.suite === suite);
   $('theorem').innerHTML = items.map((item) => `<option value="${item.id}">${item.title}</option>`).join('');
+  renderMethodSummary();
   renderSelectedTheorem();
 }
 
@@ -50,7 +66,7 @@ function renderTrace(trace) {
   state.lastTrace = trace;
   state.liveEvents = trace.events || [];
   $('download').disabled = false;
-  $('summary').textContent = `${trace.status} | ${trace.provider}/${trace.model} | ${trace.elapsed_ms}ms`;
+  $('summary').textContent = `${trace.status} | ${trace.provider}/${trace.model} | ${trace.elapsed_ms}ms | ${beamLabel()}`;
   renderTimeline();
   $('finalProof').textContent = trace.final_proof || trace.error || 'No final proof.';
   if (state.liveEvents.length) selectEvent(state.liveEvents[state.liveEvents.length - 1].index);
@@ -129,6 +145,7 @@ async function streamRun() {
       suite: $('suite').value,
       provider: $('provider').value,
       max_attempts: Number($('maxAttempts').value),
+      beam_width: Number($('beamWidth').value),
     }),
   });
   if (!response.ok || !response.body) {
@@ -165,6 +182,7 @@ async function runSuite() {
         suite: $('suite').value,
         provider: $('provider').value,
         max_attempts: Number($('maxAttempts').value),
+        beam_width: Number($('beamWidth').value),
       }),
     });
     if (!response.ok || !response.body) {
@@ -205,7 +223,7 @@ function processSuiteLine(line) {
   }
   if (payload.type === 'score') {
     $('scoreSummary').textContent = `${payload.score.suite}: ${payload.score.solved}/${payload.score.attempted} solved`;
-    $('summary').textContent = `${payload.score.solved}/${payload.score.attempted} solved (${Math.round(payload.score.accuracy * 100)}%)`;
+    $('summary').textContent = `${payload.score.solved}/${payload.score.attempted} solved (${Math.round(payload.score.accuracy * 100)}%) | ${beamLabel()}`;
   }
 }
 
@@ -250,7 +268,7 @@ function processStreamLine(line) {
   if (payload.type === 'trace') {
     state.lastTrace = payload.trace;
     $('download').disabled = false;
-    $('summary').textContent = `${payload.trace.status} | ${payload.trace.provider}/${payload.trace.model} | ${payload.trace.elapsed_ms}ms`;
+    $('summary').textContent = `${payload.trace.status} | ${payload.trace.provider}/${payload.trace.model} | ${payload.trace.elapsed_ms}ms | ${beamLabel()}`;
     $('finalProof').textContent = payload.trace.final_proof || payload.trace.error || 'No final proof.';
   }
 }
@@ -260,13 +278,34 @@ async function runWithoutStreaming() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        theorem_id: $('theorem').value,
-        suite: $('suite').value,
-        provider: $('provider').value,
-        max_attempts: Number($('maxAttempts').value),
+      theorem_id: $('theorem').value,
+      suite: $('suite').value,
+      provider: $('provider').value,
+      max_attempts: Number($('maxAttempts').value),
+      beam_width: Number($('beamWidth').value),
       }),
     });
   renderTrace(payload.trace);
+}
+
+function beamLabel() {
+  const width = Number($('beamWidth').value);
+  return width === 1 ? 'linear retry' : `beam width ${width}`;
+}
+
+function renderMethodSummary() {
+  const suite = $('suite').value;
+  const copy = suiteCopy[suite] || suiteCopy.smoke;
+  const attempts = Number($('maxAttempts').value);
+  const beamWidth = Number($('beamWidth').value);
+  const budget = attempts * beamWidth;
+  $('suiteSummary').textContent = copy.summary;
+  $('suiteComparison').textContent = copy.comparison;
+  $('searchSummary').textContent = beamWidth === 1 ? 'Linear retry' : `Beam width ${beamWidth}`;
+  $('searchComparison').textContent = beamWidth === 1
+    ? 'Baseline mode: one candidate is verified per repair iteration.'
+    : `Current mode: up to ${beamWidth} candidates are verified per iteration before repair.`;
+  $('runBudget').textContent = `Up to ${budget} candidate verification${budget === 1 ? '' : 's'} per theorem.`;
 }
 
 function downloadTrace() {
@@ -288,6 +327,8 @@ async function init() {
 
 $('suite').addEventListener('change', renderBenchmarks);
 $('theorem').addEventListener('change', renderSelectedTheorem);
+$('maxAttempts').addEventListener('input', renderMethodSummary);
+$('beamWidth').addEventListener('input', renderMethodSummary);
 $('run').addEventListener('click', run);
 $('runSuite').addEventListener('click', runSuite);
 $('download').addEventListener('click', downloadTrace);
