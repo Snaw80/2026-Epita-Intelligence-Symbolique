@@ -136,6 +136,48 @@ class GraphTests(unittest.TestCase):
         self.assertEqual([attempt.proof for attempt in trace.attempts], ["exact bad", "trivial"])
         self.assertTrue(any(event.kind == "beam_started" and event.payload["beam_width"] == 3 for event in trace.events))
 
+    def test_graph_can_run_mcts_over_valid_partial_prefixes(self) -> None:
+        from m8_proof_agent.graph import ProofCandidate, run_proof_graph
+        from m8_proof_agent.models import LeanResult
+
+        contexts = []
+
+        class Provider:
+            name = "fake"
+            model = "unit"
+
+            def generate_candidates(self, context):
+                contexts.append(context)
+                if context["proof_prefix"] == "":
+                    return [
+                        ProofCandidate(proof="exact bad", rationale="Invalid direct proof."),
+                        ProofCandidate(proof="intro hp", rationale="Open implication premise."),
+                    ]
+                return [ProofCandidate(proof="exact hp", rationale="Close from premise.")]
+
+        def verify(imports: str, statement: str, proof: str) -> LeanResult:
+            if proof == "intro hp\nexact hp":
+                return LeanResult(success=True, status="success", output="ok")
+            if proof == "intro hp\nskip":
+                return LeanResult(success=False, status="failed", errors="unsolved goals\nhp : True\n⊢ True")
+            return LeanResult(success=False, status="failed", errors="unknown identifier")
+
+        trace = run_proof_graph(
+            self._benchmark(),
+            Provider(),
+            verify_fn=verify,
+            search_strategy="mcts",
+            beam_width=2,
+            mcts_iterations=4,
+        )
+
+        self.assertEqual(trace.status, "success")
+        self.assertEqual(trace.final_proof, "intro hp\nexact hp")
+        self.assertTrue(any(context["search_strategy"] == "mcts" for context in contexts))
+        self.assertTrue(any(context["proof_prefix"] == "intro hp" for context in contexts))
+        self.assertTrue(any(event.kind == "mcts_started" for event in trace.events))
+        self.assertTrue(any(event.kind == "mcts_node_kept" for event in trace.events))
+
     def test_graph_stops_when_lean_setup_is_missing(self) -> None:
         from m8_proof_agent.graph import ProofCandidate, run_proof_graph
         from m8_proof_agent.models import LeanResult

@@ -87,6 +87,16 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(too_low.beam_width, 1)
         self.assertEqual(too_high.beam_width, 5)
 
+    def test_run_request_clamps_mcts_iterations_and_strategy(self) -> None:
+        from m8_proof_agent.models import RunRequest
+
+        too_low = RunRequest(theorem_id="x", search_strategy="mcts", mcts_iterations=0)
+        too_high = RunRequest(theorem_id="x", search_strategy="mcts", mcts_iterations=99)
+
+        self.assertEqual(too_low.search_strategy, "mcts")
+        self.assertEqual(too_low.mcts_iterations, 1)
+        self.assertEqual(too_high.mcts_iterations, 40)
+
     def test_run_request_leaves_model_empty_so_provider_can_use_env(self) -> None:
         from m8_proof_agent.models import RunRequest
 

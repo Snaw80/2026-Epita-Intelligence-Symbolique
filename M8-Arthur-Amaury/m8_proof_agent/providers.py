@@ -45,12 +45,20 @@ class ChatCompletionsProvider:
 
     def generate_candidates(self, context: Dict[str, object]) -> List[ProofCandidate]:
         candidate_count = max(1, min(int(context.get("candidate_count", 1) or 1), 5))
+        search_strategy = str(context.get("search_strategy") or "beam")
+        proof_prefix = str(context.get("proof_prefix") or "")
+        instruction = (
+            "Return only the next Lean tactic line or short tactic block to append to the current proof prefix. "
+            "Each API choice should contain one branch expansion."
+            if search_strategy == "mcts"
+            else "Return only a Lean tactic proof body for this theorem. Each API choice should contain one candidate proof body."
+        )
         prompt = (
-            "Return only a Lean tactic proof body for this theorem. "
-            "Each API choice should contain one candidate proof body.\n\n"
+            f"{instruction}\n\n"
             f"Imports:\n{context.get('imports', '')}\n\n"
             f"Statement:\n{context.get('statement', '')}\n\n"
             f"Initial Lean goal state:\n{context.get('goal_state', '')}\n\n"
+            f"Current proof prefix:\n{proof_prefix}\n\n"
             f"Recent Lean errors:\n{context.get('errors', [])}"
         )
         payload = {

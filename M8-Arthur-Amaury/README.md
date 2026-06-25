@@ -6,7 +6,7 @@ The demo uses a multi-agent proof loop:
 
 1. The orchestrator loads a theorem from the smoke suite or the miniF2F starter subset.
 2. Lean probes the initial goal state so the prompt includes hypotheses and the target before the first tactic.
-3. Proof agents propose a beam of Lean tactic bodies instead of a single linear guess.
+3. Proof agents search with either beam search or experimental MCTS over proof prefixes.
 4. Lean verifies each candidate through `lean` or `lake env lean`.
 5. Failed Lean output is fed to the repair loop.
 6. Successful runs are represented as JSON traces and can be replayed during the presentation.
@@ -39,7 +39,9 @@ M8-Arthur-Amaury/.venv/bin/python -m unittest discover -s M8-Arthur-Amaury/tests
 - `replay`: loads the newest saved trace from `M8-Arthur-Amaury/traces/`.
 - `real run`: calls a provider and verifies the candidate proof locally.
 - `Run suite`: runs every theorem in the selected suite, saves one trace per theorem, and reports solved/attempted accuracy. Click `Open` in the score table to inspect one theorem's latest saved trace.
-- `Beam width`: controls how many candidates compete per iteration. Width 1 is the linear retry baseline; wider beams show several branches verified by Lean before repair.
+- `Search strategy`: choose beam search for stable candidate competition or MCTS for experimental tree search over proof prefixes.
+- `Beam width`: controls how many candidates compete per iteration or per expanded MCTS node. Width 1 is the linear retry baseline in beam mode.
+- `MCTS iterations`: caps how many proof-prefix nodes the tree search expands.
 
 The benchmark suites are intentionally split for the 10-minute demo:
 

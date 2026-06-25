@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 Status = Literal["success", "failed", "setup_needed", "provider_error", "timeout", "replay"]
 Mode = Literal["real", "replay"]
+SearchStrategy = Literal["beam", "mcts"]
 
 
 class AgentRole(str, Enum):
@@ -87,6 +88,8 @@ class RunRequest(BaseModel):
     model: str = ""
     max_attempts: int = 3
     beam_width: int = 1
+    search_strategy: SearchStrategy = "beam"
+    mcts_iterations: int = 12
     replay_trace: Optional[str] = None
 
     def __init__(self, **data: Any) -> None:
@@ -94,6 +97,8 @@ class RunRequest(BaseModel):
             data["max_attempts"] = max(1, min(int(data["max_attempts"]), 8))
         if "beam_width" in data:
             data["beam_width"] = max(1, min(int(data["beam_width"]), 5))
+        if "mcts_iterations" in data:
+            data["mcts_iterations"] = max(1, min(int(data["mcts_iterations"]), 40))
         super().__init__(**data)
 
 

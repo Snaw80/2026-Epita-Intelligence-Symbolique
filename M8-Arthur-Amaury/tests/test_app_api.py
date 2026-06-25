@@ -171,6 +171,54 @@ class AppApiTests(unittest.TestCase):
         self.assertEqual(payload["trace"]["final_proof"], "trivial")
         self.assertEqual(replay_payload["trace"]["run_id"], payload["trace"]["run_id"])
 
+    def test_run_passes_search_strategy_to_graph(self) -> None:
+        import app
+        from m8_proof_agent.models import ProofTrace
+
+        original_get_provider = app.get_provider
+        original_trace_dir = app.TRACE_DIR
+        original_run_proof_graph = app.run_proof_graph
+        seen = {}
+        with tempfile.TemporaryDirectory() as tmp:
+            app.TRACE_DIR = Path(tmp)
+            app.get_provider = lambda name, model="": FakeProvider()
+
+            def fake_run_proof_graph(theorem, provider, **kwargs):
+                seen.update(kwargs)
+                return ProofTrace(
+                    run_id="run-search-strategy",
+                    theorem=theorem,
+                    mode="real",
+                    provider=provider.name,
+                    model=provider.model,
+                    status="success",
+                    final_proof="trivial",
+                )
+
+            app.run_proof_graph = fake_run_proof_graph
+            try:
+                status, _payload = app.api_response(
+                    "POST",
+                    "/api/run",
+                    json.dumps(
+                        {
+                            "theorem_id": "smoke_true",
+                            "suite": "smoke",
+                            "provider": "openai",
+                            "search_strategy": "mcts",
+                            "mcts_iterations": 7,
+                        }
+                    ).encode("utf-8"),
+                )
+            finally:
+                app.get_provider = original_get_provider
+                app.run_proof_graph = original_run_proof_graph
+                app.TRACE_DIR = original_trace_dir
+
+        self.assertEqual(status, 200)
+        self.assertEqual(seen["search_strategy"], "mcts")
+        self.assertEqual(seen["mcts_iterations"], 7)
+
     def test_stream_run_lines_yields_events_then_final_trace(self) -> None:
         import app
         from m8_proof_agent.models import LeanResult

@@ -105,6 +105,8 @@ def api_response(method: str, path: str, body: bytes) -> Tuple[int, Dict[str, An
                 verify_fn=VERIFY_FN,
                 max_attempts=request.max_attempts,
                 beam_width=request.beam_width,
+                search_strategy=request.search_strategy,
+                mcts_iterations=request.mcts_iterations,
                 goal_probe_fn=GOAL_PROBE_FN,
             )
             save_trace(trace, TRACE_DIR)
@@ -128,6 +130,8 @@ def api_response(method: str, path: str, body: bytes) -> Tuple[int, Dict[str, An
                     verify_fn=VERIFY_FN,
                     max_attempts=request.max_attempts,
                     beam_width=request.beam_width,
+                    search_strategy=request.search_strategy,
+                    mcts_iterations=request.mcts_iterations,
                     goal_probe_fn=GOAL_PROBE_FN,
                 )
                 trace_path = save_trace(trace, TRACE_DIR)
@@ -190,6 +194,8 @@ def stream_run_lines(body: bytes) -> Iterator[bytes]:
         verify_fn=VERIFY_FN,
         max_attempts=request.max_attempts,
         beam_width=request.beam_width,
+        search_strategy=request.search_strategy,
+        mcts_iterations=request.mcts_iterations,
         goal_probe_fn=GOAL_PROBE_FN,
         event_sink=emit_event,
     )
@@ -220,6 +226,8 @@ def stream_suite_lines(body: bytes) -> Iterator[bytes]:
                 verify_fn=VERIFY_FN,
                 max_attempts=request.max_attempts,
                 beam_width=request.beam_width,
+                search_strategy=request.search_strategy,
+                mcts_iterations=request.mcts_iterations,
                 goal_probe_fn=GOAL_PROBE_FN,
             )
             trace_path = save_trace(trace, TRACE_DIR)
@@ -333,6 +341,8 @@ class Handler(BaseHTTPRequestHandler):
             verify_fn=VERIFY_FN,
             max_attempts=request.max_attempts,
             beam_width=request.beam_width,
+            search_strategy=request.search_strategy,
+            mcts_iterations=request.mcts_iterations,
             goal_probe_fn=GOAL_PROBE_FN,
             event_sink=emit_event,
         )

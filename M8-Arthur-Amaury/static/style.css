@@ -70,40 +70,38 @@ h3 { margin: 18px 0 8px; }
   margin-bottom: 16px;
 }
 
-.method-strip {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.method-strip > div {
-  min-width: 0;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-  padding: 14px;
-}
-
-.method-strip strong {
-  display: block;
-  margin: 3px 0 6px;
-  font-size: 16px;
-}
-
-.method-strip p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.35;
-}
-
 .metric-label {
   display: block;
   color: var(--accent);
   font-size: 11px;
   font-weight: 800;
   text-transform: uppercase;
+}
+
+.problem-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  margin: 14px 0 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.problem-meta > div {
+  min-width: 0;
+}
+
+.problem-meta strong {
+  display: block;
+  margin: 2px 0 4px;
+  font-size: 14px;
+}
+
+.problem-meta p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .controls, .problem, .results {
@@ -281,7 +279,7 @@ pre {
 
 @media (max-width: 780px) {
   .topbar, .results-head { display: block; }
-  .method-strip { grid-template-columns: 1fr; }
+  .problem-meta { grid-template-columns: 1fr; }
   .workspace { grid-template-columns: 1fr; }
   .trace-grid { grid-template-columns: 1fr; }
   .detail-panel { position: static; }
